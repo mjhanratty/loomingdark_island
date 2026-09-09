@@ -1,0 +1,92 @@
+id: LDI-INFRA-0006
+status: approved
+priority: high
+created_at: 2026-09-09
+updated_at: 2026-09-09
+
+task_class: cross_system
+
+objective: >-
+  Harden the Looming Dark control plane for routine Cursor work now that local
+  Cursor execution is proven. Reduce approval spam and token waste, add explicit
+  context-budget rules for LOW/MEDIUM tasks, and add project-level Cursor command
+  permissions that automatically allow only routine read-only diagnostics while
+  denying package-install and clearly destructive shell actions unless a future
+  approved task explicitly changes that policy.
+
+scope:
+  area: infrastructure
+  system: control-plane
+  task_type: cross_system
+
+worker:
+  preferred: cursor
+  fallback: codex
+  run_class: MEDIUM
+  model: null
+
+ownership:
+  allowed_paths:
+    - control-plane/**
+    - scripts/**
+    - tests/control-plane/**
+    - tasks/examples/**
+    - .cursor/**
+  forbidden_paths:
+    - game/**
+    - design/**
+    - assets/**
+    - Packages/**
+    - ProjectSettings/**
+    - reports/**
+
+budget:
+  paid_credits_allowed: false
+  max_estimated_cost_usd: 0
+  max_generation_attempts: 0
+
+requirements:
+  - Preserve the accepted Cursor execution path, Cursor response normalization, Codex behavior, and all existing tests.
+  - Use current official Cursor CLI permission semantics; project-level permissions must live under .cursor/ and be repository-scoped.
+  - Add a narrow project-level Cursor allowlist for routine read-only inspection commands used repeatedly by this repository, including git status, git diff, git log, git show, git rev-parse, git merge-base, git rev-list, git branch/list inspection, git stash list, ls, cat, head, tail, test, and grep-style read-only inspection where supported.
+  - Do not broadly allow all git, gh, python3, shell, package-manager, network, or filesystem commands.
+  - Add explicit deny rules for package-install and dangerous/destructive command families where supported by Cursor permission syntax, including brew install/upgrade, pip/pip3 install, npm/yarn/pnpm install/add, curl-to-shell installers, rm, sudo, chmod, git clean, git reset --hard, and force push. Deny rules must take precedence over allow rules.
+  - Do not block ordinary task-scoped file editing by the Cursor agent itself; the policy target here is shell-command execution and approval reduction, not disabling the worker.
+  - Do not install, uninstall, or update any package, CLI, SDK, plugin, or dependency during this task.
+  - Remove reliance on broad --trust behavior if current Cursor CLI permissions/sandbox semantics provide a safer non-interactive alternative that still passes tests; otherwise document the remaining limitation and keep behavior unchanged rather than guessing unsupported flags.
+  - Add context-budget metadata to worker instructions for LOW/MEDIUM tasks. Include an explicit maximum context-file count and compact-context guidance so workers read only authoritative rules plus exact task/spec files unless additional discovery is necessary.
+  - LOW tasks should target at most 5 task-specific context files beyond authoritative rules; MEDIUM tasks should target at most 10. If the task packet explicitly names fewer files, preserve that narrower scope.
+  - Do not embed full repository documents back into worker prompts.
+  - Add tests proving the context-budget metadata is present and bounded for LOW/MEDIUM tasks.
+  - Add tests proving the repository Cursor permission config allows representative safe read-only commands and denies representative install/destructive commands without creating a broad Shell(git), Shell(gh), Shell(python3), or wildcard allowance.
+  - Add a concise command-policy note to control-plane/README.md describing why routine read-only commands are allowlisted and write/install/destructive commands remain gated.
+  - Do not change Grok/model routing yet.
+  - Do not touch Unity or production game content.
+  - Batch shell diagnostics into as few invocations as practical; do not perform repeated discovery loops for known paths or known tools.
+  - Complete the full delivery lifecycle automatically: sync main, create a task branch, implement, validate, commit, push, open PR, and return the PR link. Do not ask the user to run Git commands.
+
+acceptance:
+  - existing control-plane tests remain green
+  - new tests cover LOW/MEDIUM context-budget metadata and bounded file counts
+  - .cursor project permissions narrowly auto-allow representative read-only inspection commands
+  - .cursor project permissions explicitly deny representative package-install/destructive commands
+  - no broad git/gh/python3/wildcard shell allow rule is introduced
+  - no packages, CLIs, SDKs, plugins, or dependencies are installed or removed
+  - no live Cursor or Codex proof rerun is required for this task
+  - no Unity/design/assets/packages/project-settings changes
+  - completion report calls out any security limitation that cannot be enforced mechanically by current Cursor CLI semantics
+
+validation:
+  compile_required: false
+  unity_console_clean: false
+  tests:
+    - python3 -m py_compile control-plane/ldi.py scripts/ldi tests/control-plane/test_ldi.py
+    - python3 scripts/ldi --self-test
+    - git diff --check
+
+completion_report:
+  files_changed: []
+  checks_performed: []
+  warnings: []
+  unresolved: []
+  follow_up_tasks: []
