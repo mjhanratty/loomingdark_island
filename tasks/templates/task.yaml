@@ -1,0 +1,58 @@
+# Looming Dark task packet template
+
+id: LDI-AREA-0000
+status: draft
+priority: normal
+created_at: null
+updated_at: null
+
+objective: ""
+
+scope:
+  area: ""
+  system: ""
+  task_type: ""
+
+worker:
+  preferred: null
+  fallback: null
+  run_class: MEDIUM
+  model: null
+
+inputs:
+  specs: []
+  references: []
+  dependencies: []
+
+ownership:
+  allowed_paths: []
+  forbidden_paths: []
+  write_locks: []
+
+services:
+  unity_mcp: false
+  meshy: false
+  tripo: false
+  krea: false
+  rokoko: false
+  cascadeur: false
+  elevenlabs: false
+
+budget:
+  paid_credits_allowed: false
+  max_estimated_cost_usd: 0
+  max_generation_attempts: 0
+
+acceptance: []
+
+validation:
+  compile_required: false
+  unity_console_clean: false
+  tests: []
+
+completion_report:
+  files_changed: []
+  checks_performed: []
+  warnings: []
+  unresolved: []
+  follow_up_tasks: []
