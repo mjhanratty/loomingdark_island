@@ -1,0 +1,34 @@
+{
+  "adapter": "CodexAdapter",
+  "command_identity": {
+    "argv": [
+      "/Applications/ChatGPT.app/Contents/Resources/codex",
+      "--version"
+    ],
+    "executable": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "sha256": "9e2ddb83ed3a6a47f81a418baae8c6fa563ef45e825550fb43590ce3b0a7c916"
+  },
+  "discovery": {
+    "adapter": "CodexAdapter",
+    "available": true,
+    "executable": "codex",
+    "path": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "worker": "codex"
+  },
+  "duration_seconds": 0.046,
+  "ended_at": "2026-09-09T16:50:14+00:00",
+  "exit_status": 0,
+  "report_path": "reports/LDI-EX-0007-20260909T165014Z.json",
+  "run_class": "high",
+  "schema_version": 1,
+  "started_at": "2026-09-09T16:50:14+00:00",
+  "status": "completed",
+  "stderr_summary": "WARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)\n",
+  "stdout_summary": "codex-cli 0.145.0-alpha.30\n",
+  "task_id": "LDI-EX-0007",
+  "task_path": "tasks/examples/valid-live-dispatch-proof.yaml",
+  "task_result": "local worker CLI invocation proved through adapter",
+  "unresolved": [],
+  "warnings": [],
+  "worker": "codex"
+}

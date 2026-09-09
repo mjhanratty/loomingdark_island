@@ -1,0 +1,43 @@
+id: LDI-EX-0007
+status: approved
+type: infrastructure
+task_class: cross_system
+priority: normal
+objective: >-
+  Approved repository-safe live-dispatch proof task. The control plane may invoke
+  a local worker CLI version probe through its adapter and write a report, but it
+  may not modify Unity, assets, design files, packages, or project settings.
+worker:
+  preferred: codex
+  fallback: cursor
+  run_class: HIGH
+  model: null
+ownership:
+  allowed_paths:
+    - control-plane/**
+    - scripts/**
+    - tests/control-plane/**
+    - tasks/examples/**
+    - reports/**
+  forbidden_paths:
+    - game/**
+    - design/**
+    - assets/**
+    - Packages/**
+    - ProjectSettings/**
+  write_locks: []
+services:
+  unity_mcp: false
+  meshy: false
+  tripo: false
+  krea: false
+  rokoko: false
+  cascadeur: false
+  elevenlabs: false
+budget:
+  paid_credits_allowed: false
+  max_estimated_cost_usd: 0
+  max_generation_attempts: 0
+acceptance:
+  - local codex worker CLI is invoked through the adapter layer
+  - structured report is written under reports/
