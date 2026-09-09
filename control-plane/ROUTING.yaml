@@ -2,11 +2,13 @@ version: 1
 
 purpose: >-
   Deterministic worker/model routing policy for Looming Dark I. The goal is to
-  conserve premium reasoning, prefer reversible work, and keep Codex and Cursor
-  from editing the same high-conflict files simultaneously.
+  conserve premium reasoning, prefer reversible work, use independent model
+  families where review adds value, and keep workers from editing the same
+  high-conflict files simultaneously.
 
 workers:
   cursor:
+    role: bulk_implementation
     strengths:
       - bulk implementation
       - repetitive code generation
@@ -17,17 +19,36 @@ workers:
       low: composer
       medium: grok
       high: frontier
+
   codex:
+    role: architecture_and_hard_implementation
     strengths:
       - architecture
       - difficult debugging
       - cross-system integration
+      - implementation of approved architecture
       - review of failed implementations
     preferred_models:
       low: luna
       medium: terra
       high: sol
       critical: sol
+
+  claude:
+    role: independent_review_and_escalation
+    availability: claude_pro
+    strengths:
+      - independent architecture review
+      - cross-system audit
+      - failure diagnosis after another worker stalls
+      - acceptance-criteria review
+      - contradiction/coupling detection across large context
+      - alternative reasoning path when Codex or Cursor is stuck
+    preferred_models:
+      medium: sonnet
+      high: sonnet
+      critical: opus
+    default_write_policy: review_first
 
 routing:
   - when:
@@ -43,9 +64,23 @@ routing:
     worker: codex
     run_class: high
   - when:
+      task_class: [independent_review, architecture_review, large_context_audit, acceptance_review]
+    worker: claude
+    run_class: high
+  - when:
       task_class: [critical_blocker, multi_system_failure]
     worker: codex
     run_class: critical
+
+review_policy:
+  require_claude_review_for:
+    - architecture_change_with_cross_system_impact
+    - major_shared_manager_change
+    - save_state_architecture_change
+    - task_marked_independent_review_required
+  reviewer: claude
+  default_run_class: high
+  rule: reviewer_does_not_edit_owned_files_unless_escalated_to_owner
 
 failover:
   cursor_to_codex:
@@ -58,6 +93,17 @@ failover:
       - codex_quota_constrained
       - task_reclassified_as_mechanical
       - bulk_followup_after_architecture_decision
+  primary_to_claude:
+    trigger:
+      - independent_second_opinion_requested
+      - two_failed_reasoning_attempts
+      - cross_system_contradiction_suspected
+      - architecture_review_required
+  claude_to_primary:
+    trigger:
+      - review_complete
+      - diagnosis_complete
+      - implementation_should_return_to_original_owner
 
 conflict_policy:
   exclusive_patterns:
@@ -84,3 +130,8 @@ reporting:
     - tests
     - warnings
     - unresolved
+  reviewer_additions:
+    - findings
+    - acceptance_result
+    - implementation_risk
+    - recommended_owner_for_followup
