@@ -1,0 +1,11 @@
+id: LDI-EX-0002
+status: approved
+task_class: architecture
+priority: normal
+objective: >-
+  Example architecture task used to prove Codex high-class routing.
+owner: shared
+allowed_files:
+  - control-plane/**
+acceptance:
+  - routing selects codex / high

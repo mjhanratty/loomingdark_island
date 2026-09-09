@@ -1,0 +1,13 @@
+id: LDI-EX-0003
+status: approved
+task_class: architecture
+priority: normal
+objective: >-
+  Example task with an explicit worker/run_class lock that must be preserved
+  even though routing would otherwise choose Codex/high.
+owner: cursor
+run_class: low
+allowed_files:
+  - control-plane/**
+acceptance:
+  - locked worker cursor and run_class low are preserved

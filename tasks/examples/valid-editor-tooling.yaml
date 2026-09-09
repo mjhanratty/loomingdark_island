@@ -1,0 +1,16 @@
+id: LDI-EX-0001
+status: approved
+type: infrastructure
+task_class: editor_tooling
+priority: normal
+objective: >-
+  Example unlocked editor-tooling task used to prove deterministic
+  control-plane dry-run routing.
+owner: shared
+inputs:
+  - AGENTS.md
+  - control-plane/ROUTING.yaml
+allowed_files:
+  - control-plane/**
+acceptance:
+  - routing selects cursor / medium

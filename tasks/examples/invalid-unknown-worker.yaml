@@ -1,0 +1,9 @@
+id: LDI-EX-BAD-WORKER
+status: approved
+task_class: docs
+priority: normal
+objective: Invalid example locked to an unknown worker.
+owner: chatgpt
+run_class: low
+allowed_files:
+  - control-plane/**

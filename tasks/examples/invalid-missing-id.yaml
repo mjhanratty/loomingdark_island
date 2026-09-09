@@ -1,0 +1,7 @@
+status: approved
+task_class: docs
+priority: normal
+objective: Invalid example that is missing the required id field.
+owner: shared
+allowed_files:
+  - control-plane/**
