@@ -751,5 +751,132 @@ class WorkerAdapterTests(unittest.TestCase):
             self.assertEqual(report["status"], "completed")
 
 
+class ContextBudgetTests(unittest.TestCase):
+    def test_low_context_budget_metadata_is_present_and_bounded(self) -> None:
+        task_path = ROOT / "tasks/examples/valid-cursor-actual-task-execution-proof.yaml"
+        task = ldi.load_yaml_file(task_path)
+        instruction = ldi.build_worker_instruction(task, task_path, ROOT)
+        budget = instruction["context_budget"]
+        self.assertEqual(budget["run_class"], "low")
+        self.assertEqual(budget["max_task_specific_context_files"], 5)
+        self.assertLessEqual(len(budget["selected_task_specific_context_paths"]), 5)
+        self.assertIn("compact context", budget["guidance"].lower())
+        self.assertNotIn("authoritative_repo_rules", instruction)
+
+    def test_medium_context_budget_metadata_is_present_and_bounded(self) -> None:
+        task_path = ROOT / "tasks/examples/valid-editor-tooling.yaml"
+        task = ldi.load_yaml_file(task_path)
+        # Locked run_class is absent; routing for tooling is medium.
+        instruction = ldi.build_worker_instruction(task, task_path, ROOT, run_class="medium")
+        budget = instruction["context_budget"]
+        self.assertEqual(budget["run_class"], "medium")
+        self.assertEqual(budget["max_task_specific_context_files"], 10)
+        self.assertLessEqual(len(budget["selected_task_specific_context_paths"]), 10)
+
+    def test_named_fewer_context_files_preserves_narrower_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "control-plane").mkdir()
+            (root / "control-plane" / "ROUTING.yaml").write_text(
+                (ROOT / "control-plane" / "ROUTING.yaml").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            task_path = root / "task.yaml"
+            task_path.write_text(
+                "id: LDI-EX-BUDGET\nstatus: approved\n"
+                "objective: Budget scope check.\n"
+                "task_class: tooling\n"
+                "worker:\n  preferred: cursor\n  run_class: LOW\n"
+                "inputs:\n  specs:\n    - control-plane/README.md\n    - control-plane/ARCHITECTURE.md\n",
+                encoding="utf-8",
+            )
+            task = ldi.load_yaml_file(task_path)
+            instruction = ldi.build_worker_instruction(task, task_path, root)
+            budget = instruction["context_budget"]
+            self.assertEqual(budget["max_task_specific_context_files"], 2)
+            self.assertEqual(
+                budget["selected_task_specific_context_paths"],
+                ["control-plane/README.md", "control-plane/ARCHITECTURE.md"],
+            )
+
+    def test_high_run_class_omits_context_budget(self) -> None:
+        task_path = ROOT / "tasks/examples/valid-actual-task-execution-proof.yaml"
+        task = ldi.load_yaml_file(task_path)
+        instruction = ldi.build_worker_instruction(task, task_path, ROOT)
+        self.assertNotIn("context_budget", instruction)
+
+
+class CursorPermissionConfigTests(unittest.TestCase):
+    def _load_permissions(self) -> dict[str, list[str]]:
+        path = ROOT / ldi.CURSOR_CLI_PERMISSIONS_PATH
+        self.assertTrue(path.is_file(), f"missing {ldi.CURSOR_CLI_PERMISSIONS_PATH}")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        permissions = payload.get("permissions")
+        self.assertIsInstance(permissions, dict)
+        allow = permissions.get("allow")
+        deny = permissions.get("deny")
+        self.assertIsInstance(allow, list)
+        self.assertIsInstance(deny, list)
+        return {"allow": allow, "deny": deny}
+
+    def test_cursor_permissions_allow_readonly_inspection_commands(self) -> None:
+        allow = self._load_permissions()["allow"]
+        required = {
+            "Shell(git:status*)",
+            "Shell(git:diff*)",
+            "Shell(git:log*)",
+            "Shell(git:show*)",
+            "Shell(git:rev-parse*)",
+            "Shell(git:merge-base*)",
+            "Shell(git:rev-list*)",
+            "Shell(git:branch*)",
+            "Shell(git:stash list*)",
+            "Shell(ls)",
+            "Shell(cat)",
+            "Shell(head)",
+            "Shell(tail)",
+            "Shell(test)",
+            "Shell(grep)",
+        }
+        self.assertTrue(required.issubset(set(allow)))
+
+    def test_cursor_permissions_deny_install_and_destructive_commands(self) -> None:
+        deny = self._load_permissions()["deny"]
+        required_substrings = [
+            "Shell(brew:install",
+            "Shell(pip",
+            "Shell(pip3",
+            "Shell(npm:install",
+            "Shell(yarn:install",
+            "Shell(pnpm:install",
+            "Shell(curl",
+            "Shell(rm",
+            "Shell(sudo",
+            "Shell(chmod",
+            "Shell(git:clean",
+            "Shell(git:reset --hard",
+            "Shell(git:push --force",
+        ]
+        for needle in required_substrings:
+            self.assertTrue(
+                any(str(item).startswith(needle) or needle in str(item) for item in deny),
+                f"missing deny coverage for {needle}",
+            )
+
+    def test_cursor_permissions_have_no_broad_shell_allowances(self) -> None:
+        allow = self._load_permissions()["allow"]
+        forbidden = {
+            "Shell(git)",
+            "Shell(gh)",
+            "Shell(python3)",
+            "Shell(*)",
+            "Shell(**)",
+        }
+        self.assertTrue(forbidden.isdisjoint(set(allow)))
+        for item in allow:
+            self.assertFalse(str(item) in {"Shell(git)", "Shell(gh)", "Shell(python3)"})
+            self.assertFalse(str(item).startswith("Shell(*)"))
+
+
 if __name__ == "__main__":
     unittest.main()
