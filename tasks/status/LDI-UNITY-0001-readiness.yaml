@@ -1,0 +1,71 @@
+id: LDI-UNITY-0001
+status: blocked
+checked_at: 2026-09-09T19:42:00Z
+workspace: /workspace
+repository: mjhanratty/loomingdark_island
+ref: origin/main
+
+unity_project:
+  in_repository: false
+  discovered_path: null
+  evidence:
+    - ABSENT /workspace/game
+    - ABSENT /workspace/ProjectSettings/ProjectVersion.txt
+    - ABSENT /workspace/game/ProjectSettings/ProjectVersion.txt
+    - ABSENT /workspace/Packages
+    - ABSENT /workspace/Assets
+  notes: >-
+    README documents game/ as the Unity project location when migrated/created.
+    No Unity project path was invented. No out-of-repo Unity project was present
+    on this workspace at the inspected local paths.
+
+unity_editor:
+  version_from_projectversion: null
+  unity_6_or_2022_3: unknown
+  editor_or_hub_on_path: false
+  inspected_executables:
+    - unity
+    - Unity
+    - unity-hub
+    - UnityHub
+    - UnityHub.AppImage
+
+unity_6_readiness: blocked
+
+unity_ai_mcp:
+  readiness: missing/not-configured
+  evidence:
+    - no Unity MCP tools exposed in this Cursor session
+    - ABSENT /workspace/.cursor/mcp.json
+    - ABSENT /home/ubuntu/.cursor/mcp.json
+    - no Packages/manifest.json or other Unity package metadata in this repository
+    - control-plane/ldi.py has no UnityAdapter; ARCHITECTURE.md lists Unity MCP as a planned adapter
+  smoke_test: not_run
+
+install_or_upgrade_performed: false
+production_content_changed: false
+paid_external_generation_calls: false
+
+blockers:
+  - Unity project is not in this repository and no local Unity project was discovered on this workspace.
+  - ProjectSettings/ProjectVersion.txt is unavailable, so the editor version cannot be classified as Unity 6 or 2022.3.x.
+  - No Unity editor or Unity Hub executable is on PATH or at the inspected local install paths.
+  - Unity AI / MCP is not configured in this workspace (no MCP config, no package metadata, no live Unity MCP surface).
+
+next_action: >-
+  On the machine that already holds the Looming Dark Unity project, make that
+  project visible to this repository without copying it blindly (documented
+  location: game/), confirm ProjectSettings/ProjectVersion.txt, open the project
+  in Unity 6 only if that upgrade is already user-initiated, and enable the
+  already-installed Unity AI/MCP integration. Then re-run LDI-UNITY-0001.
+  Do not install or upgrade Unity, packages, or MCP from the shell in that rerun
+  unless a later task explicitly authorizes it.
+
+checks_performed:
+  - repository Unity marker paths
+  - ProjectVersion.txt
+  - Unity/Hub PATH and common local install paths
+  - Cursor MCP config files
+  - dynamic Unity/MCP tool discovery
+  - python3 scripts/ldi --self-test
+  - git diff --check
