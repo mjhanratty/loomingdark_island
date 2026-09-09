@@ -1,0 +1,13 @@
+id: LDI-EX-0004
+status: approved
+task_class: normal_implementation
+priority: normal
+objective: >-
+  Example task that would edit a Unity scene and therefore requires exclusive
+  ownership.
+owner: shared
+allowed_files:
+  - game/Assets/Scenes/Harbor.unity
+  - game/Assets/Prefabs/HarborMaster.prefab
+acceptance:
+  - exclusive_ownership_required is true
