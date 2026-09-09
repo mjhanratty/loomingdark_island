@@ -448,6 +448,80 @@ class WorkerAdapterTests(unittest.TestCase):
             self.assertEqual(report["worker_response"]["task_id"], "LDI-EX-0008")
             self.assertTrue(report["validation_results"][0]["accepted"])
 
+    def test_partial_worker_response_with_valid_proof_is_not_accepted(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=["/tmp/codex", "exec", "-"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "task_id": "LDI-EX-0008",
+                    "status": "partial",
+                    "files_changed": [
+                        "tasks/examples/worker-execution-proof/LDI-EX-0008.json"
+                    ],
+                    "checks_performed": ["proof written"],
+                    "warnings": [],
+                    "unresolved": ["worker reported a blocker"],
+                    "summary": "proof exists but task is partial",
+                }
+            ),
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for folder in ("control-plane", "tasks/examples"):
+                (root / folder).mkdir(parents=True, exist_ok=True)
+            (root / "AGENTS.md").write_text("agents\n", encoding="utf-8")
+            (root / "CONSTRUCTION.md").write_text("construction\n", encoding="utf-8")
+            (root / "control-plane" / "ROUTING.yaml").write_text(
+                (ROOT / "control-plane" / "ROUTING.yaml").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            for rel_path in ("ARCHITECTURE.md", "README.md", "ldi.py"):
+                (root / "control-plane" / rel_path).write_text(rel_path, encoding="utf-8")
+            proof_dir = root / "tasks/examples/worker-execution-proof"
+            proof_dir.mkdir()
+            proof_path = proof_dir / "LDI-EX-0008.json"
+            task_path = root / "tasks/examples/task.yaml"
+            objective = "Prove actual local worker task execution."
+            task_path.write_text(
+                "id: LDI-EX-0008\nstatus: approved\n"
+                f"objective: {objective}\ntask_class: cross_system\n"
+                "worker:\n  preferred: codex\n  run_class: HIGH\n"
+                "inputs:\n  specs: []\n"
+                "ownership:\n  allowed_paths:\n    - tasks/examples/worker-execution-proof/**\n"
+                "  forbidden_paths:\n    - assets/**\n"
+                "budget:\n  paid_credits_allowed: false\n  max_estimated_cost_usd: 0\n  max_generation_attempts: 0\n"
+                "proof_task:\n  objective: Write proof.\n",
+                encoding="utf-8",
+            )
+
+            def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+                if args and args[0] == ["git", "status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
+                proof_path.write_text(
+                    json.dumps(
+                        {
+                            "task_id": "LDI-EX-0008",
+                            "objective": objective,
+                            "followed_repository_restrictions": True,
+                            "permitted_directory": "tasks/examples/worker-execution-proof",
+                            "worker_result": "completed",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return completed
+
+            with mock.patch("shutil.which", return_value="/tmp/codex"):
+                with mock.patch("subprocess.run", side_effect=fake_run):
+                    report = ldi.execute_task(task_path, root=root)
+            self.assertTrue(report["validation_results"][0]["accepted"])
+            self.assertEqual(report["worker_invocation_status"], "completed")
+            self.assertEqual(report["task_acceptance_status"], "rejected")
+            self.assertEqual(report["status"], "failed")
+            self.assertIn("worker response was not completed", report["unresolved"][0])
+
 
 if __name__ == "__main__":
     unittest.main()

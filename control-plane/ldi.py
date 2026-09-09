@@ -491,6 +491,15 @@ def validate_proof_output(root: Path, instruction: dict[str, Any] | None) -> dic
     }
 
 
+def worker_response_is_successful(response: dict[str, Any] | None) -> bool:
+    if not isinstance(response, dict):
+        return False
+    status = str(response.get("status", "")).strip().lower()
+    unresolved = response.get("unresolved")
+    has_unresolved = bool(unresolved) if isinstance(unresolved, list) else unresolved not in (None, "")
+    return status in {"completed", "success", "successful"} and not has_unresolved
+
+
 def load_routing(root: Path) -> dict[str, Any]:
     path = root / "control-plane" / "ROUTING.yaml"
     data = load_yaml_file(path)
@@ -840,11 +849,17 @@ def execute_task(
                     report["worker_response"] = parse_worker_response(result.stdout)
                     validation = validate_proof_output(root, instruction)
                     report["validation_results"].append(validation)
-                    accepted = bool(validation.get("accepted"))
+                    response_ok = worker_response_is_successful(report["worker_response"])
+                    accepted = bool(validation.get("accepted")) and response_ok
                     report["task_acceptance_status"] = "accepted" if accepted else "rejected"
                     report["status"] = "completed" if accepted else "failed"
                     if not accepted:
-                        report["unresolved"].append("proof output validation failed")
+                        if not validation.get("accepted"):
+                            report["unresolved"].append("proof output validation failed")
+                        if not response_ok:
+                            report["unresolved"].append(
+                                "worker response was not completed/successful or has unresolved blockers"
+                            )
             else:
                 report["status"] = "failed"
                 report["worker_invocation_status"] = "failed"
