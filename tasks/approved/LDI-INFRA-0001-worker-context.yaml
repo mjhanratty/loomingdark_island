@@ -1,0 +1,38 @@
+id: LDI-INFRA-0001
+title: Verify worker repository context
+type: infrastructure_validation
+status: approved
+priority: critical
+owner: shared
+workers:
+  - cursor
+  - codex
+objective: >-
+  Verify that Cursor and Codex are both operating from mjhanratty/loomingdark_island,
+  reading the same repository rules, and not pointed at a previous project workspace.
+allowed_changes:
+  - none
+read_only: true
+checks:
+  - Confirm repository path/name is mjhanratty/loomingdark_island
+  - Confirm current branch is main unless explicitly instructed otherwise
+  - Confirm AGENTS.md is readable
+  - Confirm CONSTRUCTION.md is readable
+  - Confirm ROADMAP.md is readable
+  - Confirm tasks/approved/LDI-INFRA-0001-worker-context.yaml is readable
+acceptance:
+  - Worker reports the correct repository
+  - Worker reports the current branch
+  - Worker confirms all four required files are readable
+  - Worker makes no repository changes
+failure_conditions:
+  - Local workspace points to 949fantasy or another repository
+  - Required source-of-truth files are unavailable
+  - Worker attempts to modify files
+report:
+  required_fields:
+    - worker
+    - repository
+    - branch
+    - files_verified
+    - result
