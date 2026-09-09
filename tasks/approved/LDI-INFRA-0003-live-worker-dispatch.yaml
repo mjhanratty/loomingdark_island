@@ -1,0 +1,113 @@
+id: LDI-INFRA-0003
+status: approved
+priority: high
+created_at: 2026-09-09
+updated_at: 2026-09-09
+
+task_class: cross_system
+
+objective: >-
+  Extend the Looming Dark control-plane CLI from dry-run planning to a safe,
+  local live-dispatch foundation that can discover installed AI worker CLIs,
+  invoke an explicitly approved worker task without manual prompt relay, capture
+  the result, and write a structured execution report. This milestone must prove
+  one real local worker invocation while remaining reversible and must not touch
+  Unity, asset-generation services, or paid generation APIs.
+
+scope:
+  area: infrastructure
+  system: control-plane
+  task_type: cross_system
+
+worker:
+  preferred: codex
+  fallback: cursor
+  run_class: HIGH
+  model: null
+
+inputs:
+  specs:
+    - AGENTS.md
+    - CONSTRUCTION.md
+    - control-plane/ARCHITECTURE.md
+    - control-plane/ROUTING.yaml
+    - control-plane/README.md
+    - control-plane/ldi.py
+  references:
+    - tasks/templates/task.yaml
+    - tasks/examples/valid-editor-tooling.yaml
+    - tasks/examples/valid-architecture.yaml
+    - tasks/examples/valid-architecture-review.yaml
+  dependencies:
+    - LDI-INFRA-0002
+
+ownership:
+  allowed_paths:
+    - control-plane/**
+    - scripts/**
+    - tests/control-plane/**
+    - tasks/examples/**
+    - reports/**
+  forbidden_paths:
+    - game/**
+    - design/**
+    - assets/**
+    - Packages/**
+    - ProjectSettings/**
+  write_locks: []
+
+services:
+  unity_mcp: false
+  meshy: false
+  tripo: false
+  krea: false
+  rokoko: false
+  cascadeur: false
+  elevenlabs: false
+
+budget:
+  paid_credits_allowed: false
+  max_estimated_cost_usd: 0
+  max_generation_attempts: 0
+
+requirements:
+  - Preserve all existing --dry-run behavior and existing tests.
+  - Add worker-adapter abstraction rather than hard-coding routing logic into subprocess calls.
+  - Support capability discovery for cursor, codex, and claude workers using locally available executables/configuration.
+  - Missing workers must be reported as unavailable, not treated as fatal to the entire control plane.
+  - Add an explicit execution gate. Live dispatch must require both --execute and an approved task packet; draft/unapproved tasks must be rejected.
+  - Never infer permission to spend paid API credits from --execute.
+  - First live proof must use a repository-safe task that cannot edit Unity, assets, design files, package files, or project settings.
+  - Capture worker, run_class, command/adapter identity, start/end state, exit status, stdout/stderr summary, and task result into a structured report under reports/.
+  - Do not store secrets, tokens, credentials, or full environment dumps in reports.
+  - Do not shell-interpolate task content. Use argument arrays or equivalent safe process invocation.
+  - Add timeout and nonzero-exit handling.
+  - Do not automatically retry a failed premium worker in this milestone; report the failure and recommended failover route instead.
+  - Claude must remain review-first according to ROUTING.yaml; do not give Claude write ownership unless a task explicitly assigns it.
+  - Keep worker-specific command construction isolated so later MCP/API adapters can replace CLI adapters without changing task semantics.
+
+acceptance:
+  - Existing 17 control-plane tests still pass.
+  - New tests cover approved-vs-draft execute gating, unavailable worker discovery, timeout/nonzero handling, safe command construction, and report generation.
+  - `python3 scripts/ldi --workers` or equivalent reports local availability for cursor, codex, and claude without invoking them.
+  - `python3 scripts/ldi --execute <approved-safe-test-task>` or equivalent performs one real local worker invocation through the adapter layer.
+  - The live proof produces a structured report under reports/ with no secrets and no Unity/asset/design changes.
+  - Dry-run remains the default and performs no worker invocation.
+  - Completion report identifies which local worker was actually proven live and which workers remain discovery-only/unavailable.
+  - No new package is installed unless separately authorized before installation.
+
+validation:
+  compile_required: false
+  unity_console_clean: false
+  tests:
+    - python3 -m py_compile control-plane/ldi.py scripts/ldi tests/control-plane/test_ldi.py
+    - python3 scripts/ldi --self-test
+    - worker discovery command
+    - one approved safe live-dispatch proof
+
+completion_report:
+  files_changed: []
+  checks_performed: []
+  warnings: []
+  unresolved: []
+  follow_up_tasks: []
