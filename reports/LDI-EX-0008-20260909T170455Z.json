@@ -1,0 +1,52 @@
+{
+  "adapter": "CodexAdapter",
+  "command_identity": {
+    "argv": [
+      "/Applications/ChatGPT.app/Contents/Resources/codex",
+      "exec",
+      "--cd",
+      "/Users/matthewhanratty/Documents/Looming Dark",
+      "--sandbox",
+      "workspace-write",
+      "--ask-for-approval",
+      "never",
+      "--output-schema",
+      "/var/folders/hj/chyb6fy142b3xf_l3qbb4tq00000gn/T/ldi-worker-rr8arojz/response-schema.json",
+      "-"
+    ],
+    "executable": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "sha256": "3002cb3b1d57446df51044ef530191786c0f3b2aa09ba919b39245df84401ea6"
+  },
+  "discovery": {
+    "adapter": "CodexAdapter",
+    "available": true,
+    "executable": "codex",
+    "path": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "worker": "codex"
+  },
+  "duration_seconds": 0.328,
+  "ended_at": "2026-09-09T17:04:55+00:00",
+  "exit_status": 2,
+  "files_changed": [],
+  "report_path": "reports/LDI-EX-0008-20260909T170455Z.json",
+  "run_class": "high",
+  "schema_version": 2,
+  "started_at": "2026-09-09T17:04:55+00:00",
+  "status": "failed",
+  "stderr_summary": "WARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)\nerror: unexpected argument '--ask-for-approval' found\n\n  tip: to pass '--ask-for-approval' as a value, use '-- --ask-for-approval'\n\nUsage: codex exec [OPTIONS] [PROMPT]\n       codex exec [OPTIONS] <COMMAND> [ARGS]\n\nFor more information, try '--help'.\n",
+  "stdout_summary": "",
+  "task_acceptance_status": "not_evaluated",
+  "task_id": "LDI-EX-0008",
+  "task_path": "tasks/examples/valid-actual-task-execution-proof.yaml",
+  "task_result": "worker exited nonzero; no automatic retry attempted",
+  "unresolved": [
+    "recommended failover route: inspect report and re-route explicitly"
+  ],
+  "validation_results": [],
+  "warnings": [
+    "worker wrote to stderr; see stderr_summary"
+  ],
+  "worker": "codex",
+  "worker_invocation_status": "failed",
+  "worker_response": null
+}
