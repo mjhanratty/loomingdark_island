@@ -1,0 +1,37 @@
+---
+description: Looming Dark I project constitution and shared source-of-truth rules
+alwaysApply: true
+---
+
+# Looming Dark I: Island — Cursor Project Rule
+
+Before making changes in this repository:
+
+1. Read `/AGENTS.md`.
+2. Read `/CONSTRUCTION.md`.
+3. Read the relevant approved design specification under `/design/` if one exists.
+4. If the work is task-driven, read the task packet under `/tasks/` and obey its ownership, allowed-files, restrictions, and acceptance criteria.
+
+## Source of truth
+
+The repository is authoritative. Chat history is not authoritative project storage.
+
+## Execution discipline
+
+- Do not silently reinterpret approved game design.
+- Do not install packages, SDKs, plugins, or dependencies unless the task explicitly authorizes it.
+- Do not modify unrelated files.
+- Do not edit a Unity scene, prefab, package manifest, project setting, or shared manager currently owned by another task/worker.
+- Prefer small, reversible, reviewable changes.
+- Preserve asset provenance and licensing requirements in `/CONSTRUCTION.md`.
+- Report changed files, tests performed, errors/warnings, and unfinished work.
+- Stop when the acceptance criteria are satisfied.
+
+## Project baseline
+
+- Engine: Unity 6.
+- Visual fidelity target: PS3-era geometry/material quality with modern Unity lighting, fog, weather, audio, VFX, and post-processing.
+- Design language: PS1/PS2 survival horror; atmosphere, navigation, time pressure, uncertainty, and environmental horror over combat.
+- Current production priority: full-Island macro blockout first, then detailed Beach -> Harbor -> Lighthouse -> forest-road transition vertical-slice work.
+
+If a task conflicts with `AGENTS.md` or `CONSTRUCTION.md`, stop and surface the conflict rather than guessing.
