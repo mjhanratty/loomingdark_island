@@ -938,6 +938,54 @@ def execute_task(
     return report
 
 
+def extract_json_object(text: str) -> dict[str, Any] | None:
+    """Parse a JSON object from text that may include leading/trailing prose."""
+
+    stripped = text.strip()
+    if not stripped:
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        parsed = None
+    else:
+        if isinstance(parsed, dict):
+            return parsed
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(stripped):
+        if char != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(stripped[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def is_cursor_result_envelope(payload: dict[str, Any]) -> bool:
+    return (
+        payload.get("type") == "result"
+        and payload.get("subtype") == "success"
+        and payload.get("is_error") is False
+        and isinstance(payload.get("result"), str)
+    )
+
+
+def normalize_cursor_worker_response(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the inner completion object from a Cursor Agent result envelope.
+
+    Codex and other workers that already emit the completion object are unchanged.
+    """
+
+    if not is_cursor_result_envelope(payload):
+        return payload
+    inner = extract_json_object(payload["result"])
+    return inner if isinstance(inner, dict) else payload
+
+
 def parse_worker_response(stdout: str) -> dict[str, Any] | None:
     stripped = stdout.strip()
     if not stripped:
@@ -948,7 +996,7 @@ def parse_worker_response(stdout: str) -> dict[str, Any] | None:
         except json.JSONDecodeError:
             continue
         if isinstance(parsed, dict):
-            return parsed
+            return normalize_cursor_worker_response(parsed)
     return None
 
 

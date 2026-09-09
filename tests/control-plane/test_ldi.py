@@ -583,6 +583,173 @@ class WorkerAdapterTests(unittest.TestCase):
             "Cursor agent authentication required: run 'agent login' or set CURSOR_API_KEY",
         )
 
+    def test_cursor_envelope_with_prose_normalizes_to_completion_object(self) -> None:
+        # Exact Cursor Agent shape from reports/LDI-EX-0009-20260909T182948Z.json
+        inner_completion = {
+            "task_id": "LDI-EX-0009",
+            "status": "completed",
+            "files_changed": [
+                "tasks/examples/worker-execution-proof/LDI-EX-0009.json"
+            ],
+            "checks_performed": [
+                "Read AGENTS.md and CONSTRUCTION.md locally before editing.",
+                "Created tasks/examples/worker-execution-proof/LDI-EX-0009.json with the required deterministic proof fields.",
+                "Confirmed edits stayed within the permitted proof directory and did not touch Unity, design, asset, package, or project-settings paths.",
+            ],
+            "warnings": [],
+            "unresolved": [],
+            "summary": (
+                "Created the deterministic proof artifact for LDI-EX-0009 with the "
+                "required task id, objective, permitted directory, restriction "
+                "confirmation, and completed worker result."
+            ),
+        }
+        prose_prefixed_result = (
+            "I'll read the instruction file and the project docs it depends on, "
+            "then execute exactly what's requested.Creating the required proof "
+            "artifact, then returning only the structured completion JSON.Writing "
+            "the proof artifact, then returning only the completion JSON."
+            + json.dumps(inner_completion)
+        )
+        stdout = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "duration_ms": 29836,
+                "duration_api_ms": 29836,
+                "result": prose_prefixed_result,
+                "session_id": "9c94096c-55b6-4a96-83dd-54fc760bdaa2",
+                "request_id": "f66dc3ff-c3bf-4aa0-91bf-3fd31985d094",
+                "usage": {
+                    "inputTokens": 44597,
+                    "outputTokens": 1497,
+                    "cacheReadTokens": 123520,
+                    "cacheWriteTokens": 0,
+                },
+            }
+        )
+        parsed = ldi.parse_worker_response(stdout)
+        self.assertEqual(parsed["status"], "completed")
+        self.assertEqual(parsed["unresolved"], [])
+        self.assertEqual(parsed["warnings"], [])
+        self.assertEqual(parsed["task_id"], "LDI-EX-0009")
+        self.assertTrue(ldi.worker_response_is_successful(parsed))
+
+    def test_codex_completion_object_is_unchanged_by_cursor_normalization(self) -> None:
+        completion = {
+            "task_id": "LDI-EX-0008",
+            "status": "completed",
+            "files_changed": [],
+            "checks_performed": [],
+            "warnings": [],
+            "unresolved": [],
+            "summary": "done",
+        }
+        parsed = ldi.parse_worker_response(json.dumps(completion))
+        self.assertEqual(parsed, completion)
+
+    def test_cursor_envelope_acceptance_with_valid_proof(self) -> None:
+        objective = (
+            "Prove that Cursor can complete an actual local worker task through "
+            "the control-plane execute path."
+        )
+        inner_completion = {
+            "task_id": "LDI-EX-0009",
+            "status": "completed",
+            "files_changed": [
+                "tasks/examples/worker-execution-proof/LDI-EX-0009.json"
+            ],
+            "checks_performed": ["proof written"],
+            "warnings": [],
+            "unresolved": [],
+            "summary": "done",
+        }
+        prose_prefixed_result = (
+            "I'll read the instruction file and the project docs it depends on, "
+            "then execute exactly what's requested.Creating the required proof "
+            "artifact, then returning only the structured completion JSON.Writing "
+            "the proof artifact, then returning only the completion JSON."
+            + json.dumps(inner_completion)
+        )
+        completed = subprocess.CompletedProcess(
+            args=["/tmp/agent", "-p", "--output-format", "json"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
+                    "duration_ms": 29836,
+                    "duration_api_ms": 29836,
+                    "result": prose_prefixed_result,
+                    "session_id": "9c94096c-55b6-4a96-83dd-54fc760bdaa2",
+                    "request_id": "f66dc3ff-c3bf-4aa0-91bf-3fd31985d094",
+                    "usage": {
+                        "inputTokens": 44597,
+                        "outputTokens": 1497,
+                        "cacheReadTokens": 123520,
+                        "cacheWriteTokens": 0,
+                    },
+                }
+            )
+            + "\n",
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for folder in ("control-plane", "tasks/examples"):
+                (root / folder).mkdir(parents=True, exist_ok=True)
+            (root / "AGENTS.md").write_text("agents\n", encoding="utf-8")
+            (root / "CONSTRUCTION.md").write_text("construction\n", encoding="utf-8")
+            (root / "control-plane" / "ROUTING.yaml").write_text(
+                (ROOT / "control-plane" / "ROUTING.yaml").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            for rel_path in ("ARCHITECTURE.md", "README.md", "ldi.py"):
+                (root / "control-plane" / rel_path).write_text(rel_path, encoding="utf-8")
+            proof_dir = root / "tasks/examples/worker-execution-proof"
+            proof_dir.mkdir()
+            proof_path = proof_dir / "LDI-EX-0009.json"
+            task_path = root / "tasks/examples/task.yaml"
+            task_path.write_text(
+                "id: LDI-EX-0009\nstatus: approved\n"
+                f"objective: {objective}\ntask_class: tooling\n"
+                "worker:\n  preferred: cursor\n  run_class: LOW\n"
+                "inputs:\n  specs: []\n"
+                "ownership:\n  allowed_paths:\n    - tasks/examples/worker-execution-proof/**\n"
+                "  forbidden_paths:\n    - assets/**\n"
+                "budget:\n  paid_credits_allowed: false\n  max_estimated_cost_usd: 0\n  max_generation_attempts: 0\n"
+                "proof_task:\n  objective: Write proof.\n",
+                encoding="utf-8",
+            )
+
+            def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+                if args and args[0] == ["git", "status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
+                proof_path.write_text(
+                    json.dumps(
+                        {
+                            "task_id": "LDI-EX-0009",
+                            "objective": objective,
+                            "followed_repository_restrictions": True,
+                            "permitted_directory": "tasks/examples/worker-execution-proof",
+                            "worker_result": "completed",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return completed
+
+            with mock.patch("shutil.which", return_value="/tmp/agent"):
+                with mock.patch("subprocess.run", side_effect=fake_run):
+                    report = ldi.execute_task(task_path, root=root)
+            self.assertEqual(report["worker_response"]["status"], "completed")
+            self.assertEqual(report["worker_response"]["unresolved"], [])
+            self.assertTrue(report["validation_results"][0]["accepted"])
+            self.assertEqual(report["task_acceptance_status"], "accepted")
+            self.assertEqual(report["status"], "completed")
+
 
 if __name__ == "__main__":
     unittest.main()
