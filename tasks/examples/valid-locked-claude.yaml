@@ -1,0 +1,13 @@
+id: LDI-EX-0006
+status: approved
+task_class: docs
+priority: normal
+objective: >-
+  Example task with an explicit Claude worker lock that must be preserved
+  even though routing would otherwise choose Cursor/low.
+owner: claude
+run_class: high
+allowed_files:
+  - control-plane/**
+acceptance:
+  - locked worker claude and run_class high are preserved

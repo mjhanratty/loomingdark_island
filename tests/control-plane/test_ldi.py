@@ -34,12 +34,32 @@ class PlanTaskTests(unittest.TestCase):
         self.assertEqual(plan["worker"], "codex")
         self.assertEqual(plan["run_class"], "high")
 
+    def test_architecture_review_routes_claude_high(self) -> None:
+        plan = ldi.plan_task(
+            ROOT / "tasks/examples/valid-architecture-review.yaml", root=ROOT
+        )
+        self.assertEqual(plan["task_id"], "LDI-EX-0005")
+        self.assertEqual(plan["task_class"], "architecture_review")
+        self.assertEqual(plan["worker"], "claude")
+        self.assertEqual(plan["run_class"], "high")
+        self.assertFalse(plan["worker_locked"])
+        self.assertFalse(plan["run_class_locked"])
+
     def test_locked_worker_and_run_class_are_preserved(self) -> None:
         plan = ldi.plan_task(ROOT / "tasks/examples/valid-locked-worker.yaml", root=ROOT)
         self.assertEqual(plan["worker"], "cursor")
         self.assertEqual(plan["run_class"], "low")
         self.assertTrue(plan["worker_locked"])
         self.assertTrue(plan["run_class_locked"])
+
+    def test_locked_claude_worker_is_preserved(self) -> None:
+        plan = ldi.plan_task(ROOT / "tasks/examples/valid-locked-claude.yaml", root=ROOT)
+        self.assertEqual(plan["task_id"], "LDI-EX-0006")
+        self.assertEqual(plan["worker"], "claude")
+        self.assertEqual(plan["run_class"], "high")
+        self.assertTrue(plan["worker_locked"])
+        self.assertTrue(plan["run_class_locked"])
+        self.assertEqual(plan["task_class"], "docs")
 
     def test_unity_paths_require_exclusive_ownership(self) -> None:
         plan = ldi.plan_task(ROOT / "tasks/examples/valid-unity-conflict.yaml", root=ROOT)

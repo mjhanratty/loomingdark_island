@@ -1,0 +1,12 @@
+id: LDI-EX-0005
+status: approved
+task_class: architecture_review
+priority: normal
+objective: >-
+  Example unlocked architecture_review task used to prove Claude high-class
+  routing from ROUTING.yaml.
+owner: shared
+allowed_files:
+  - control-plane/**
+acceptance:
+  - routing selects claude / high
