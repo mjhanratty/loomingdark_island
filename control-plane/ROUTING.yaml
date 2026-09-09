@@ -1,0 +1,86 @@
+version: 1
+
+purpose: >-
+  Deterministic worker/model routing policy for Looming Dark I. The goal is to
+  conserve premium reasoning, prefer reversible work, and keep Codex and Cursor
+  from editing the same high-conflict files simultaneously.
+
+workers:
+  cursor:
+    strengths:
+      - bulk implementation
+      - repetitive code generation
+      - editor tooling
+      - safe refactors
+      - background/parallel work
+    preferred_models:
+      low: composer
+      medium: grok
+      high: frontier
+  codex:
+    strengths:
+      - architecture
+      - difficult debugging
+      - cross-system integration
+      - review of failed implementations
+    preferred_models:
+      low: luna
+      medium: terra
+      high: sol
+      critical: sol
+
+routing:
+  - when:
+      task_class: [docs, inventory, boilerplate, repetitive_safe_edit]
+    worker: cursor
+    run_class: low
+  - when:
+      task_class: [normal_implementation, editor_tooling, isolated_refactor]
+    worker: cursor
+    run_class: medium
+  - when:
+      task_class: [architecture, cross_system, difficult_debugging]
+    worker: codex
+    run_class: high
+  - when:
+      task_class: [critical_blocker, multi_system_failure]
+    worker: codex
+    run_class: critical
+
+failover:
+  cursor_to_codex:
+    trigger:
+      - acceptance_failed_twice
+      - architecture_unclear
+      - repeated_compile_failure
+  codex_to_cursor:
+    trigger:
+      - codex_quota_constrained
+      - task_reclassified_as_mechanical
+      - bulk_followup_after_architecture_decision
+
+conflict_policy:
+  exclusive_patterns:
+    - "*.unity"
+    - "*.prefab"
+    - "Packages/manifest.json"
+    - "Packages/packages-lock.json"
+    - "ProjectSettings/*"
+    - "*InputActions*"
+    - "*GlobalManager*"
+  rule: one_active_owner_per_file
+
+paid_tools:
+  rule: never_spend_without_authorized_task
+  primary_then_fallback: true
+
+reporting:
+  required:
+    - task_id
+    - worker
+    - run_class
+    - status
+    - files_changed
+    - tests
+    - warnings
+    - unresolved
