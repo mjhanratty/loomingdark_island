@@ -1,0 +1,70 @@
+id: LDI-INFRA-0002
+status: approved
+type: infrastructure
+task_class: editor_tooling
+priority: high
+
+objective: >-
+  Build the first local Looming Dark control-plane CLI that can read approved
+  task packets, validate required fields, apply ROUTING.yaml, and print a
+  deterministic execution plan without actually invoking Codex, Cursor, Unity,
+  Meshy, Tripo, or paid services yet.
+
+owner: cursor
+run_class: medium
+
+inputs:
+  - AGENTS.md
+  - CONSTRUCTION.md
+  - control-plane/ARCHITECTURE.md
+  - control-plane/ROUTING.yaml
+  - tasks/templates/task.yaml
+
+allowed_files:
+  - control-plane/**
+  - tests/control-plane/**
+  - scripts/**
+  - tasks/examples/**
+
+restrictions:
+  - no package or SDK installation unless already available in the standard runtime
+  - no paid API calls
+  - no Unity edits
+  - no GitHub Actions changes
+  - no external network calls required for acceptance
+  - do not modify AGENTS.md, CONSTRUCTION.md, ROADMAP.md, or ROUTING.yaml
+
+required_behavior:
+  - accept a task YAML path as input
+  - validate required task fields
+  - read control-plane/ROUTING.yaml
+  - choose worker and run_class when not explicitly locked by the task
+  - preserve an explicitly locked worker/run_class unless invalid
+  - detect obvious high-conflict file patterns and surface exclusive ownership requirement
+  - support dry-run only in this task
+  - emit a human-readable plan
+  - emit equivalent structured JSON suitable for later automation
+  - return nonzero on invalid task input
+
+implementation_preference:
+  language: python
+  reason: >-
+    Prefer Python standard library plus existing dependencies to minimize setup
+    and keep the bootstrap portable on the current Mac.
+
+acceptance:
+  - a valid example task produces a deterministic worker/run-class plan
+  - an invalid task fails cleanly with a useful error
+  - dry-run makes no project/game changes
+  - routing output shows task id, worker, run class, conflict/exclusive status, and next action
+  - automated tests or a self-test command cover valid and invalid cases
+  - README or usage text explains one-command execution
+
+completion_report:
+  required: true
+  include:
+    - files_changed
+    - commands_run
+    - test_results
+    - warnings
+    - unresolved
