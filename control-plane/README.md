@@ -31,6 +31,10 @@ Worker discovery:
 python3 scripts/ldi --workers
 ```
 
+Cursor discovery uses the current `agent` executable. Actual Cursor execution is
+constructed as `agent -p --output-format json --trust --workspace <repo> <prompt>`
+with a compact prompt that points to a temporary structured instruction file.
+
 Live dispatch is opt-in and requires an approved task packet. Packets with a
 `proof_task` field receive actual structured task instructions; older proof
 packets without `proof_task` retain the repository-safe version-probe behavior.
@@ -49,6 +53,10 @@ python3 control-plane/ldi.py --dry-run tasks/examples/valid-editor-tooling.yaml
 `--execute` does not grant permission to use paid generation APIs. Reports are
 written under `reports/` and separate worker invocation status from task
 acceptance status.
+
+Worker instructions use compact repository-relative context references instead
+of embedding full authoritative documents. Workers must read the listed files
+locally before editing.
 
 ## Output
 

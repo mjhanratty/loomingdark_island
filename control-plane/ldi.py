@@ -36,6 +36,7 @@ NEXT_ACTION = (
 WORKER_NAMES = ("cursor", "codex", "claude")
 DEFAULT_TIMEOUT_SECONDS = 20
 PROOF_ROOT = "tasks/examples/worker-execution-proof"
+AUTHORITATIVE_RULE_PATHS = ("AGENTS.md", "CONSTRUCTION.md")
 
 
 class PlanError(Exception):
@@ -306,7 +307,41 @@ class VersionProbeAdapter(WorkerAdapter):
 
 class CursorAdapter(VersionProbeAdapter):
     name = "cursor"
-    executable = "cursor"
+    executable = "agent"
+
+    def build_stdin(self, instruction: dict[str, Any] | None) -> str | None:
+        return None
+
+    def build_command(
+        self,
+        task: dict[str, Any],
+        task_path: Path,
+        root: Path,
+        instruction_path: Path | None = None,
+        response_schema_path: Path | None = None,
+    ) -> list[str]:
+        discovered = self.discover()
+        if not discovered["path"]:
+            raise ExecuteError("Cursor agent CLI is unavailable: executable 'agent' was not found on PATH")
+        if should_execute_real_task(task):
+            if instruction_path is None:
+                raise ExecuteError("actual task execution requires an instruction path")
+            prompt = (
+                "Read the JSON task instruction file at "
+                f"{instruction_path} and execute it exactly. Return only the "
+                "structured completion JSON requested by that instruction."
+            )
+            return [
+                str(discovered["path"]),
+                "-p",
+                "--output-format",
+                "json",
+                "--trust",
+                "--workspace",
+                str(root),
+                prompt,
+            ]
+        return [str(discovered["path"]), "--version"]
 
 
 class CodexAdapter(VersionProbeAdapter):
@@ -340,28 +375,14 @@ def should_execute_real_task(task: dict[str, Any]) -> bool:
     return isinstance(task.get("proof_task"), dict)
 
 
-def read_context_file(root: Path, rel_path: str, limit: int = 12000) -> str:
-    path = root / rel_path
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ExecuteError(f"cannot read required context file {rel_path}: {exc}") from exc
-    if len(text) <= limit:
-        return text
-    return text[:limit] + "\n[truncated]"
-
-
-def collect_authoritative_context(root: Path, task: dict[str, Any]) -> dict[str, str]:
-    context: dict[str, str] = {
-        "AGENTS.md": read_context_file(root, "AGENTS.md"),
-        "CONSTRUCTION.md": read_context_file(root, "CONSTRUCTION.md"),
-    }
+def collect_authoritative_context_paths(task: dict[str, Any]) -> list[str]:
+    paths = list(AUTHORITATIVE_RULE_PATHS)
     inputs = task.get("inputs")
     specs = inputs.get("specs") if isinstance(inputs, dict) else []
     for rel_path in _as_path_list(specs):
-        if rel_path not in context:
-            context[rel_path] = read_context_file(root, rel_path)
-    return context
+        if rel_path not in paths:
+            paths.append(rel_path)
+    return paths
 
 
 def build_completion_requirements(task: dict[str, Any]) -> dict[str, Any]:
@@ -375,6 +396,18 @@ def build_completion_requirements(task: dict[str, Any]) -> dict[str, Any]:
         "unresolved": [],
         "follow_up_tasks": [],
     }
+
+
+def build_legacy_embedded_worker_instruction(task: dict[str, Any], task_path: Path, root: Path) -> dict[str, Any]:
+    instruction = build_worker_instruction(task, task_path, root)
+    embedded: dict[str, str] = {}
+    for rel_path in collect_authoritative_context_paths(task):
+        path = root / rel_path
+        if path.is_file():
+            embedded[rel_path] = path.read_text(encoding="utf-8")
+    instruction["authoritative_repo_rules"] = embedded
+    instruction.pop("authoritative_repo_rule_paths", None)
+    return instruction
 
 
 def build_worker_instruction(task: dict[str, Any], task_path: Path, root: Path) -> dict[str, Any]:
@@ -393,7 +426,15 @@ def build_worker_instruction(task: dict[str, Any], task_path: Path, root: Path) 
             "objective": objective,
             "acceptance": task.get("acceptance") or [],
         },
-        "authoritative_repo_rules": collect_authoritative_context(root, task),
+        "context_policy": "compact_file_references",
+        "invariant_rules": [
+            "The repository is authoritative over chat history or model memory.",
+            "Read each authoritative_repo_rule_paths entry locally before editing.",
+            "Obey the task packet ownership, allowed paths, forbidden paths, budget, and acceptance criteria.",
+            "Do not install packages or invoke paid/external asset services unless the approved task explicitly authorizes it.",
+            "Do not touch Unity, design, asset, package, or project-settings paths unless explicitly allowed.",
+        ],
+        "authoritative_repo_rule_paths": collect_authoritative_context_paths(task),
         "allowed_paths": _as_path_list(ownership.get("allowed_paths")),
         "forbidden_paths": _as_path_list(ownership.get("forbidden_paths")),
         "completion_report_requirements": build_completion_requirements(task),
@@ -411,6 +452,7 @@ def build_worker_instruction(task: dict[str, Any], task_path: Path, root: Path) 
             },
         },
         "hard_restrictions": [
+            "Read the repository files listed in authoritative_repo_rule_paths before editing.",
             "Modify only the required proof output file under tasks/examples/worker-execution-proof/.",
             "Do not modify Unity, design, asset, package, or project settings paths.",
             "Do not install packages.",
@@ -498,6 +540,17 @@ def worker_response_is_successful(response: dict[str, Any] | None) -> bool:
     unresolved = response.get("unresolved")
     has_unresolved = bool(unresolved) if isinstance(unresolved, list) else unresolved not in (None, "")
     return status in {"completed", "success", "successful"} and not has_unresolved
+
+
+def classify_worker_failure(worker: str, stderr: str) -> str:
+    lowered = stderr.lower()
+    if worker == "cursor" and (
+        "authentication required" in lowered
+        or "agent login" in lowered
+        or "cursor_api_key" in lowered
+    ):
+        return "Cursor agent authentication required: run 'agent login' or set CURSOR_API_KEY"
+    return "recommended failover route: inspect report and re-route explicitly"
 
 
 def load_routing(root: Path) -> dict[str, Any]:
@@ -865,7 +918,7 @@ def execute_task(
                 report["worker_invocation_status"] = "failed"
                 report["task_acceptance_status"] = "not_evaluated"
                 report["task_result"] = "worker exited nonzero; no automatic retry attempted"
-                report["unresolved"].append("recommended failover route: inspect report and re-route explicitly")
+                report["unresolved"].append(classify_worker_failure(worker, result.stderr))
         except subprocess.TimeoutExpired as exc:
             report["status"] = "timeout"
             report["worker_invocation_status"] = "timeout"

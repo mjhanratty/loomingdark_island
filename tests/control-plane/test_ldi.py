@@ -98,6 +98,14 @@ class PlanTaskTests(unittest.TestCase):
         self.assertEqual(plan["worker"], "codex")
         self.assertEqual(plan["run_class"], "high")
 
+    def test_cursor_actual_execution_proof_task_plans_cursor_low(self) -> None:
+        plan = ldi.plan_task(
+            ROOT / "tasks/examples/valid-cursor-actual-task-execution-proof.yaml", root=ROOT
+        )
+        self.assertEqual(plan["task_id"], "LDI-EX-0009")
+        self.assertEqual(plan["worker"], "cursor")
+        self.assertEqual(plan["run_class"], "low")
+
     def test_template_nested_worker_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "nested.yaml"
@@ -233,6 +241,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(set(payload["workers"]), {"cursor", "codex", "claude"})
         for info in payload["workers"].values():
             self.assertIn("available", info)
+        self.assertEqual(payload["workers"]["cursor"]["executable"], "agent")
 
 
 class WorkerAdapterTests(unittest.TestCase):
@@ -269,20 +278,62 @@ class WorkerAdapterTests(unittest.TestCase):
         self.assertEqual(command[-1], "-")
         self.assertNotIn("LDI-EX-CMD", command)
 
+    def test_cursor_command_construction_uses_agent_prompt_mode(self) -> None:
+        adapter = ldi.CursorAdapter()
+        task = {
+            "id": "LDI-EX-CURSOR",
+            "status": "approved",
+            "objective": "x",
+            "proof_task": {"objective": "prove it"},
+        }
+        with mock.patch("shutil.which", return_value="/tmp/agent"):
+            command = adapter.build_command(
+                task,
+                ROOT / "tasks/examples/valid-actual-task-execution-proof.yaml",
+                ROOT,
+                instruction_path=Path("/tmp/instruction.json"),
+                response_schema_path=Path("/tmp/schema.json"),
+            )
+        self.assertEqual(command[0:4], ["/tmp/agent", "-p", "--output-format", "json"])
+        self.assertIn("--trust", command)
+        self.assertIn("--workspace", command)
+        self.assertIn("/tmp/instruction.json", command[-1])
+        self.assertNotIn("LDI-EX-CURSOR", command)
+
     def test_worker_instruction_contains_required_context(self) -> None:
         task_path = ROOT / "tasks/examples/valid-actual-task-execution-proof.yaml"
         task = ldi.load_yaml_file(task_path)
         instruction = ldi.build_worker_instruction(task, task_path, ROOT)
         self.assertEqual(instruction["task"]["id"], "LDI-EX-0008")
         self.assertIn("objective", instruction["task"])
-        self.assertIn("AGENTS.md", instruction["authoritative_repo_rules"])
-        self.assertIn("CONSTRUCTION.md", instruction["authoritative_repo_rules"])
+        self.assertEqual(instruction["context_policy"], "compact_file_references")
+        self.assertIn("AGENTS.md", instruction["authoritative_repo_rule_paths"])
+        self.assertIn("CONSTRUCTION.md", instruction["authoritative_repo_rule_paths"])
+        self.assertNotIn("authoritative_repo_rules", instruction)
         self.assertIn("allowed_paths", instruction)
         self.assertIn("forbidden_paths", instruction)
         self.assertEqual(
             instruction["proof_task"]["required_output_file"],
             "tasks/examples/worker-execution-proof/LDI-EX-0008.json",
         )
+
+    def test_compact_context_does_not_embed_full_authoritative_docs(self) -> None:
+        task_path = ROOT / "tasks/examples/valid-actual-task-execution-proof.yaml"
+        task = ldi.load_yaml_file(task_path)
+        instruction_text = json.dumps(ldi.build_worker_instruction(task, task_path, ROOT))
+        agents_text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        construction_text = (ROOT / "CONSTRUCTION.md").read_text(encoding="utf-8")
+        self.assertNotIn(agents_text[:200], instruction_text)
+        self.assertNotIn(construction_text[:200], instruction_text)
+
+    def test_compact_context_materially_reduces_instruction_size(self) -> None:
+        task_path = ROOT / "tasks/examples/valid-actual-task-execution-proof.yaml"
+        task = ldi.load_yaml_file(task_path)
+        compact = ldi.build_worker_instruction(task, task_path, ROOT)
+        legacy = ldi.build_legacy_embedded_worker_instruction(task, task_path, ROOT)
+        compact_size = len(json.dumps(compact, sort_keys=True))
+        legacy_size = len(json.dumps(legacy, sort_keys=True))
+        self.assertLess(compact_size, legacy_size * 0.6)
 
     def test_unavailable_worker_discovery(self) -> None:
         with mock.patch("shutil.which", return_value=None):
@@ -521,6 +572,16 @@ class WorkerAdapterTests(unittest.TestCase):
             self.assertEqual(report["task_acceptance_status"], "rejected")
             self.assertEqual(report["status"], "failed")
             self.assertIn("worker response was not completed", report["unresolved"][0])
+
+    def test_cursor_auth_failure_reports_single_concrete_blocker(self) -> None:
+        blocker = ldi.classify_worker_failure(
+            "cursor",
+            "Error: Authentication required. Please run 'agent login' first.",
+        )
+        self.assertEqual(
+            blocker,
+            "Cursor agent authentication required: run 'agent login' or set CURSOR_API_KEY",
+        )
 
 
 if __name__ == "__main__":

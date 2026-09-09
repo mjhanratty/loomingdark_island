@@ -1,0 +1,49 @@
+{
+  "adapter": "CursorAdapter",
+  "command_identity": {
+    "argv": [
+      "/Users/matthewhanratty/.local/bin/agent",
+      "-p",
+      "--output-format",
+      "json",
+      "--trust",
+      "--workspace",
+      "/Users/matthewhanratty/Documents/Looming Dark",
+      "Read the JSON task instruction file at /var/folders/hj/chyb6fy142b3xf_l3qbb4tq00000gn/T/ldi-worker-pzzstdp2/instruction.json and execute it exactly. Return only the structured completion JSON requested by that instruction."
+    ],
+    "executable": "/Users/matthewhanratty/.local/bin/agent",
+    "sha256": "202391b52352633b863d11b17aeec1dc299f9016344ceaba81efbe46201f0404"
+  },
+  "discovery": {
+    "adapter": "CursorAdapter",
+    "available": true,
+    "executable": "agent",
+    "path": "/Users/matthewhanratty/.local/bin/agent",
+    "worker": "cursor"
+  },
+  "duration_seconds": 0.922,
+  "ended_at": "2026-09-09T18:01:59+00:00",
+  "exit_status": 1,
+  "files_changed": [],
+  "report_path": "reports/LDI-EX-0009-20260909T180159Z.json",
+  "run_class": "low",
+  "schema_version": 2,
+  "started_at": "2026-09-09T18:01:58+00:00",
+  "status": "failed",
+  "stderr_summary": "Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.\n",
+  "stdout_summary": "",
+  "task_acceptance_status": "not_evaluated",
+  "task_id": "LDI-EX-0009",
+  "task_path": "tasks/examples/valid-cursor-actual-task-execution-proof.yaml",
+  "task_result": "worker exited nonzero; no automatic retry attempted",
+  "unresolved": [
+    "Cursor agent authentication required: run 'agent login' or set CURSOR_API_KEY"
+  ],
+  "validation_results": [],
+  "warnings": [
+    "worker wrote to stderr; see stderr_summary"
+  ],
+  "worker": "cursor",
+  "worker_invocation_status": "failed",
+  "worker_response": null
+}
