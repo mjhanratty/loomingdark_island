@@ -1,0 +1,85 @@
+id: LDI-UNITY-0001
+status: approved
+priority: high
+created_at: 2026-09-09
+updated_at: 2026-09-09
+
+task_class: unity_integration
+
+objective: >-
+  Establish the first safe Looming Dark Unity integration milestone after control-plane
+  hardening. Verify the current local Unity project and Unity version, determine the
+  exact Unity 6 upgrade/readiness state, verify Unity AI / MCP availability using the
+  installed tooling, and prove the smallest possible non-production editor round trip
+  without modifying production level design or assets.
+
+scope:
+  area: unity
+  system: unity-mcp
+  task_type: integration
+
+worker:
+  preferred: cursor
+  fallback: codex
+  run_class: MEDIUM
+  model: null
+
+ownership:
+  allowed_paths:
+    - tasks/**
+    - control-plane/**
+    - tests/control-plane/**
+    - scripts/**
+    - game/**
+    - Packages/**
+    - ProjectSettings/**
+  forbidden_paths:
+    - design/**
+    - assets/**
+    - reports/**
+
+budget:
+  paid_credits_allowed: false
+  max_estimated_cost_usd: 0
+  max_generation_attempts: 0
+
+requirements:
+  - Read AGENTS.md and CONSTRUCTION.md first, then this task packet. Keep context compact.
+  - Start from clean current main and use a dedicated task branch. Do not work on a stale infrastructure branch.
+  - Do not install, uninstall, upgrade, or purchase Unity, Unity Hub, packages, CLIs, SDKs, Homebrew packages, npm packages, Python packages, or external tools from the shell during this task.
+  - First inspect repository state and detect whether the Unity project is already inside this repository. Do not invent a project path.
+  - If the Unity project is outside the repository, identify the existing local project path only through safe local discovery already available to Cursor; do not move, copy, rename, or delete the project automatically.
+  - Determine the project's current Unity editor version from ProjectSettings/ProjectVersion.txt when available. Record whether it is already Unity 6 or still 2022.3.x.
+  - Verify whether Unity AI Assistant / Unity MCP support is already present using existing project files, installed Unity package metadata, Editor state, or documented local integration surfaces. Do not guess package names or install missing packages.
+  - If Unity 6 and MCP are already usable, perform one minimal reversible smoke test through the supported Unity integration: read active scene state and create a clearly named temporary test GameObject under a non-production test namespace/scene, verify it exists, then remove it before completion. No production scene, prefab, terrain, lighting, or asset edits.
+  - If Unity 6 or MCP is not ready, stop before changing production content and return the exact blocker and the shortest next action needed. Do not compensate by installing tools or editing unrelated settings.
+  - Do not upgrade the Unity project from 2022.3 to Unity 6 in this task unless the project is already opened in Unity 6 and the upgrade has already been explicitly initiated by the user. This task is readiness verification, not an unattended engine migration.
+  - Preserve all existing control-plane behavior and Cursor permission policy.
+  - Do not use Meshy, Tripo, Krea, ElevenLabs, Rokoko, Cascadeur, or any paid/external generation service.
+  - Batch read-only diagnostics; avoid repeated discovery loops.
+  - Complete the full delivery lifecycle automatically for repository changes: sync main, create task branch, implement only necessary integration/readiness files, validate, commit, push, open PR, and return the PR link. Do not ask the user to run Git commands.
+
+acceptance:
+  - current Unity project location is identified without guessing
+  - current Unity editor version is identified from project evidence when available
+  - Unity 6 readiness state is explicitly classified as ready, upgrade-required, or blocked
+  - Unity AI / MCP readiness is explicitly classified as ready, missing/not-configured, or blocked
+  - if MCP is ready, a reversible non-production editor smoke test succeeds and leaves no temporary GameObject behind
+  - no package/tool/SDK installation or purchase occurs
+  - no production scene, asset, terrain, lighting, prefab, or level-design content changes occur
+  - no Meshy/Tripo or other paid external generation calls occur
+  - completion report names blockers and the exact next action if Unity 6/MCP cannot yet be proven
+
+validation:
+  compile_required: false
+  unity_console_clean: false
+  tests:
+    - python3 scripts/ldi --self-test
+    - git diff --check
+
+completion_report:
+  files_changed: []
+  checks_performed: []
+  warnings: []
+  unresolved: []
+  follow_up_tasks: []
