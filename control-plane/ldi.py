@@ -37,6 +37,11 @@ WORKER_NAMES = ("cursor", "codex", "claude")
 DEFAULT_TIMEOUT_SECONDS = 20
 PROOF_ROOT = "tasks/examples/worker-execution-proof"
 AUTHORITATIVE_RULE_PATHS = ("AGENTS.md", "CONSTRUCTION.md")
+CONTEXT_BUDGET_LIMITS = {
+    "low": 5,
+    "medium": 10,
+}
+CURSOR_CLI_PERMISSIONS_PATH = ".cursor/cli.json"
 
 
 class PlanError(Exception):
@@ -385,6 +390,66 @@ def collect_authoritative_context_paths(task: dict[str, Any]) -> list[str]:
     return paths
 
 
+def collect_task_specific_context_paths(task: dict[str, Any]) -> list[str]:
+    """Return named task-specific context paths beyond authoritative rules."""
+
+    paths: list[str] = []
+    inputs = task.get("inputs")
+    if isinstance(inputs, dict):
+        for key in ("specs", "context", "references", "docs"):
+            paths.extend(_as_path_list(inputs.get(key)))
+    authoritative = set(AUTHORITATIVE_RULE_PATHS)
+    seen: set[str] = set()
+    unique: list[str] = []
+    for rel_path in paths:
+        if rel_path in authoritative or rel_path in seen:
+            continue
+        seen.add(rel_path)
+        unique.append(rel_path)
+    return unique
+
+
+def resolve_instruction_run_class(task: dict[str, Any], root: Path) -> str | None:
+    locked_run_class, run_class_locked = extract_locked_run_class(task)
+    if run_class_locked:
+        return locked_run_class
+    task_class = extract_task_class(task)
+    if not task_class:
+        return None
+    try:
+        routing = load_routing(root)
+    except PlanError:
+        return None
+    rule = match_routing_rule(routing, task_class)
+    if rule is None:
+        return None
+    value = _as_nonempty_str(rule.get("run_class"))
+    return value.lower() if value else None
+
+
+def build_context_budget(task: dict[str, Any], run_class: str | None) -> dict[str, Any] | None:
+    if run_class is None:
+        return None
+    normalized = str(run_class).lower()
+    if normalized not in CONTEXT_BUDGET_LIMITS:
+        return None
+    ceiling = CONTEXT_BUDGET_LIMITS[normalized]
+    named = collect_task_specific_context_paths(task)
+    selected = named[:ceiling]
+    # Preserve a narrower packet-declared scope when fewer files are named.
+    max_files = min(ceiling, len(named)) if named else ceiling
+    return {
+        "run_class": normalized,
+        "max_task_specific_context_files": max_files,
+        "selected_task_specific_context_paths": selected,
+        "guidance": (
+            "Use compact context: read authoritative_repo_rule_paths and only "
+            "selected_task_specific_context_paths unless additional discovery is "
+            "necessary. Do not embed full repository documents into prompts."
+        ),
+    }
+
+
 def build_completion_requirements(task: dict[str, Any]) -> dict[str, Any]:
     completion = task.get("completion_report")
     if isinstance(completion, dict):
@@ -398,8 +463,13 @@ def build_completion_requirements(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_legacy_embedded_worker_instruction(task: dict[str, Any], task_path: Path, root: Path) -> dict[str, Any]:
-    instruction = build_worker_instruction(task, task_path, root)
+def build_legacy_embedded_worker_instruction(
+    task: dict[str, Any],
+    task_path: Path,
+    root: Path,
+    run_class: str | None = None,
+) -> dict[str, Any]:
+    instruction = build_worker_instruction(task, task_path, root, run_class=run_class)
     embedded: dict[str, str] = {}
     for rel_path in collect_authoritative_context_paths(task):
         path = root / rel_path
@@ -410,7 +480,12 @@ def build_legacy_embedded_worker_instruction(task: dict[str, Any], task_path: Pa
     return instruction
 
 
-def build_worker_instruction(task: dict[str, Any], task_path: Path, root: Path) -> dict[str, Any]:
+def build_worker_instruction(
+    task: dict[str, Any],
+    task_path: Path,
+    root: Path,
+    run_class: str | None = None,
+) -> dict[str, Any]:
     task_id = _as_nonempty_str(task.get("id"))
     objective = _as_nonempty_str(task.get("objective"))
     if task_id is None or objective is None:
@@ -418,7 +493,8 @@ def build_worker_instruction(task: dict[str, Any], task_path: Path, root: Path) 
     ownership = task.get("ownership") if isinstance(task.get("ownership"), dict) else {}
     proof_task = task.get("proof_task") if isinstance(task.get("proof_task"), dict) else {}
     proof_file = f"{PROOF_ROOT}/{task_id}.json"
-    instruction = {
+    resolved_run_class = run_class or resolve_instruction_run_class(task, root)
+    instruction: dict[str, Any] = {
         "control_plane_instruction_version": 1,
         "task": {
             "id": task_id,
@@ -433,6 +509,7 @@ def build_worker_instruction(task: dict[str, Any], task_path: Path, root: Path) 
             "Obey the task packet ownership, allowed paths, forbidden paths, budget, and acceptance criteria.",
             "Do not install packages or invoke paid/external asset services unless the approved task explicitly authorizes it.",
             "Do not touch Unity, design, asset, package, or project-settings paths unless explicitly allowed.",
+            "For LOW/MEDIUM tasks, obey context_budget limits and avoid unnecessary extra file reads.",
         ],
         "authoritative_repo_rule_paths": collect_authoritative_context_paths(task),
         "allowed_paths": _as_path_list(ownership.get("allowed_paths")),
@@ -460,6 +537,9 @@ def build_worker_instruction(task: dict[str, Any], task_path: Path, root: Path) 
             "Return a structured JSON completion result matching the provided schema.",
         ],
     }
+    context_budget = build_context_budget(task, resolved_run_class)
+    if context_budget is not None:
+        instruction["context_budget"] = context_budget
     return instruction
 
 
@@ -828,7 +908,11 @@ def execute_task(
     start = utc_now()
     start_monotonic = time.monotonic()
     discovery = adapter.discover()
-    instruction = build_worker_instruction(task, task_path, root) if should_execute_real_task(task) else None
+    instruction = (
+        build_worker_instruction(task, task_path, root, run_class=str(plan["run_class"]))
+        if should_execute_real_task(task)
+        else None
+    )
     before_files = git_changed_files(root)
     with tempfile.TemporaryDirectory(prefix="ldi-worker-") as tmp:
         tmpdir = Path(tmp)

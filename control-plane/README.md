@@ -35,6 +35,13 @@ Cursor discovery uses the current `agent` executable. Actual Cursor execution is
 constructed as `agent -p --output-format json --trust --workspace <repo> <prompt>`
 with a compact prompt that points to a temporary structured instruction file.
 
+`--trust` remains required for non-interactive workspace trust under current
+Cursor CLI semantics. It is not a substitute for `--force`/`--yolo`: command
+approval still follows project allowlist/deny rules in `.cursor/cli.json`. There
+is no documented safer headless alternative that both skips the trust prompt and
+preserves allowlist gating, so the control plane keeps `--trust` and relies on
+repository permissions for shell hardening.
+
 Live dispatch is opt-in and requires an approved task packet. Packets with a
 `proof_task` field receive actual structured task instructions; older proof
 packets without `proof_task` retain the repository-safe version-probe behavior.
@@ -56,7 +63,30 @@ acceptance status.
 
 Worker instructions use compact repository-relative context references instead
 of embedding full authoritative documents. Workers must read the listed files
-locally before editing.
+locally before editing. LOW and MEDIUM instructions also include
+`context_budget` metadata with a bounded task-specific file count (at most 5
+for LOW, 10 for MEDIUM, or fewer when the packet names a narrower set).
+
+## Cursor command policy
+
+Project-level Cursor CLI permissions live in `.cursor/cli.json` and apply only
+to this repository. Routine read-only inspection commands used repeatedly by
+workers (`git status`/`diff`/`log`/`show`/`rev-parse`/`merge-base`/`rev-list`/
+branch inspection, `git stash list`, `ls`, `cat`, `head`, `tail`, `test`, and
+grep-style readers) are narrowly allowlisted so common diagnostics do not spam
+approvals or waste tokens.
+
+Write, install, network-installer, and destructive shell families remain gated
+or explicitly denied (`rm`, `sudo`, `chmod`, package-manager installs, curl/wget
+install vectors, `git clean`, hard reset, force push). Deny rules take
+precedence over allow rules. The policy intentionally avoids broad allowances
+such as `Shell(git)`, `Shell(gh)`, `Shell(python3)`, or `Shell(*)`.
+
+Security limitation: Cursor matches shell permissions by command base and
+optional `command:args` globs. Indirect install/destroy paths (for example
+`python3 -m pip install`, or destructive actions wrapped in `bash -c`) are not
+fully enforceable by these patterns alone and still require task ownership,
+worker instructions, and human review.
 
 ## Output
 
