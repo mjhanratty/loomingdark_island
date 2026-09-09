@@ -1,0 +1,33 @@
+# Asset registry record template
+
+asset_id: LDI-ASSET-0000
+name: ""
+category: ""
+status: proposed
+
+source:
+  source_type: null
+  source_name: ""
+  source_url_or_reference: ""
+  vendor_or_creator: ""
+  license: ""
+  commercial_use_status: unknown
+  acquired_or_generated_at: null
+
+ai:
+  tool: null
+  model: null
+  generation_job_id: null
+  input_reference_ids: []
+  prompt_or_brief_ref: null
+
+production:
+  raw_output_path: null
+  modifications: []
+  unity_path: null
+  technical_qa: pending
+  visual_qa: pending
+
+restrictions:
+  no_external: false
+  notes: ""
