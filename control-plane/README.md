@@ -31,10 +31,13 @@ Worker discovery:
 python3 scripts/ldi --workers
 ```
 
-Live dispatch is opt-in and requires an approved task packet:
+Live dispatch is opt-in and requires an approved task packet. Packets with a
+`proof_task` field receive actual structured task instructions; older proof
+packets without `proof_task` retain the repository-safe version-probe behavior.
 
 ```bash
 python3 scripts/ldi --execute tasks/examples/valid-live-dispatch-proof.yaml
+python3 scripts/ldi --execute tasks/examples/valid-actual-task-execution-proof.yaml
 ```
 
 Equivalent direct invocation:
@@ -43,9 +46,9 @@ Equivalent direct invocation:
 python3 control-plane/ldi.py --dry-run tasks/examples/valid-editor-tooling.yaml
 ```
 
-`--execute` does not grant permission to use paid generation APIs. This milestone
-uses a repository-safe local CLI version probe through the selected worker
-adapter and writes a structured report under `reports/`.
+`--execute` does not grant permission to use paid generation APIs. Reports are
+written under `reports/` and separate worker invocation status from task
+acceptance status.
 
 ## Output
 
@@ -65,6 +68,8 @@ A live report includes:
 - exit status
 - stdout/stderr summaries
 - task result
+- files changed when determinable
+- validation results
 - report path
 
 Human-readable text is followed by an equivalent JSON document. Invalid task

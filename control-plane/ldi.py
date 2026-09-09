@@ -15,6 +15,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from fnmatch import fnmatch
@@ -34,6 +35,7 @@ NEXT_ACTION = (
 )
 WORKER_NAMES = ("cursor", "codex", "claude")
 DEFAULT_TIMEOUT_SECONDS = 20
+PROOF_ROOT = "tasks/examples/worker-execution-proof"
 
 
 class PlanError(Exception):
@@ -251,17 +253,54 @@ class WorkerAdapter:
             "available": path is not None,
         }
 
-    def build_command(self, task: dict[str, Any], task_path: Path) -> list[str]:
+    def build_command(
+        self,
+        task: dict[str, Any],
+        task_path: Path,
+        root: Path,
+        instruction_path: Path | None = None,
+        response_schema_path: Path | None = None,
+    ) -> list[str]:
         raise NotImplementedError
+
+    def build_stdin(self, instruction: dict[str, Any] | None) -> str | None:
+        if instruction is None:
+            return None
+        return json.dumps(instruction, indent=2, sort_keys=True)
 
 
 class VersionProbeAdapter(WorkerAdapter):
-    """Repository-safe proof adapter: invoke the local worker CLI only."""
+    """Repository-safe adapter with an actual-task path when authorized."""
 
-    def build_command(self, task: dict[str, Any], task_path: Path) -> list[str]:
+    def build_command(
+        self,
+        task: dict[str, Any],
+        task_path: Path,
+        root: Path,
+        instruction_path: Path | None = None,
+        response_schema_path: Path | None = None,
+    ) -> list[str]:
         discovered = self.discover()
         if not discovered["path"]:
             raise ExecuteError(f"worker '{self.name}' is unavailable")
+        if should_execute_real_task(task):
+            if self.name == "claude":
+                raise ExecuteError("Claude remains review-first and cannot receive write ownership")
+            if instruction_path is None or response_schema_path is None:
+                raise ExecuteError("actual task execution requires instruction and schema paths")
+            return [
+                str(discovered["path"]),
+                "--cd",
+                str(root),
+                "--sandbox",
+                "workspace-write",
+                "-a",
+                "never",
+                "exec",
+                "--output-schema",
+                str(response_schema_path),
+                "-",
+            ]
         return [str(discovered["path"]), "--version"]
 
 
@@ -295,6 +334,170 @@ def discover_workers() -> dict[str, Any]:
             name: adapter.discover() for name, adapter in worker_adapters().items()
         },
     }
+
+
+def should_execute_real_task(task: dict[str, Any]) -> bool:
+    return isinstance(task.get("proof_task"), dict)
+
+
+def read_context_file(root: Path, rel_path: str, limit: int = 12000) -> str:
+    path = root / rel_path
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ExecuteError(f"cannot read required context file {rel_path}: {exc}") from exc
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n[truncated]"
+
+
+def collect_authoritative_context(root: Path, task: dict[str, Any]) -> dict[str, str]:
+    context: dict[str, str] = {
+        "AGENTS.md": read_context_file(root, "AGENTS.md"),
+        "CONSTRUCTION.md": read_context_file(root, "CONSTRUCTION.md"),
+    }
+    inputs = task.get("inputs")
+    specs = inputs.get("specs") if isinstance(inputs, dict) else []
+    for rel_path in _as_path_list(specs):
+        if rel_path not in context:
+            context[rel_path] = read_context_file(root, rel_path)
+    return context
+
+
+def build_completion_requirements(task: dict[str, Any]) -> dict[str, Any]:
+    completion = task.get("completion_report")
+    if isinstance(completion, dict):
+        return completion
+    return {
+        "files_changed": [],
+        "checks_performed": [],
+        "warnings": [],
+        "unresolved": [],
+        "follow_up_tasks": [],
+    }
+
+
+def build_worker_instruction(task: dict[str, Any], task_path: Path, root: Path) -> dict[str, Any]:
+    task_id = _as_nonempty_str(task.get("id"))
+    objective = _as_nonempty_str(task.get("objective"))
+    if task_id is None or objective is None:
+        raise ExecuteError("cannot build worker instruction without task id and objective")
+    ownership = task.get("ownership") if isinstance(task.get("ownership"), dict) else {}
+    proof_task = task.get("proof_task") if isinstance(task.get("proof_task"), dict) else {}
+    proof_file = f"{PROOF_ROOT}/{task_id}.json"
+    instruction = {
+        "control_plane_instruction_version": 1,
+        "task": {
+            "id": task_id,
+            "path": str(task_path.resolve().relative_to(root.resolve())).replace("\\", "/"),
+            "objective": objective,
+            "acceptance": task.get("acceptance") or [],
+        },
+        "authoritative_repo_rules": collect_authoritative_context(root, task),
+        "allowed_paths": _as_path_list(ownership.get("allowed_paths")),
+        "forbidden_paths": _as_path_list(ownership.get("forbidden_paths")),
+        "completion_report_requirements": build_completion_requirements(task),
+        "proof_task": {
+            "objective": proof_task.get("objective"),
+            "permitted_effect": proof_task.get("permitted_effect") or [],
+            "forbidden_effect": proof_task.get("forbidden_effect") or [],
+            "required_output_file": proof_file,
+            "required_output_json": {
+                "task_id": task_id,
+                "objective": objective,
+                "followed_repository_restrictions": True,
+                "permitted_directory": PROOF_ROOT,
+                "worker_result": "completed",
+            },
+        },
+        "hard_restrictions": [
+            "Modify only the required proof output file under tasks/examples/worker-execution-proof/.",
+            "Do not modify Unity, design, asset, package, or project settings paths.",
+            "Do not install packages.",
+            "Do not invoke paid services or external asset services.",
+            "Return a structured JSON completion result matching the provided schema.",
+        ],
+    }
+    return instruction
+
+
+def worker_response_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "task_id": {"type": "string"},
+            "status": {"type": "string"},
+            "files_changed": {"type": "array", "items": {"type": "string"}},
+            "checks_performed": {"type": "array", "items": {"type": "string"}},
+            "warnings": {"type": "array", "items": {"type": "string"}},
+            "unresolved": {"type": "array", "items": {"type": "string"}},
+            "summary": {"type": "string"},
+        },
+        "required": [
+            "task_id",
+            "status",
+            "files_changed",
+            "checks_performed",
+            "warnings",
+            "unresolved",
+            "summary",
+        ],
+    }
+
+
+def git_changed_files(root: Path) -> list[str]:
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    files: list[str] = []
+    for line in result.stdout.splitlines():
+        if not line:
+            continue
+        files.append(line[3:].strip())
+    return sorted(files)
+
+
+def validate_proof_output(root: Path, instruction: dict[str, Any] | None) -> dict[str, Any]:
+    if instruction is None:
+        return {"kind": "version_probe", "accepted": True, "checks": []}
+    required = instruction["proof_task"]["required_output_json"]
+    rel_path = instruction["proof_task"]["required_output_file"]
+    path = root / rel_path
+    checks: list[str] = []
+    if not path.is_file():
+        return {"kind": "actual_task", "accepted": False, "checks": [f"missing {rel_path}"]}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"kind": "actual_task", "accepted": False, "checks": [f"invalid proof JSON: {exc}"]}
+    accepted = True
+    for key, expected in required.items():
+        actual = data.get(key)
+        ok = actual == expected
+        checks.append(f"{key}: {'ok' if ok else 'mismatch'}")
+        accepted = accepted and ok
+    return {
+        "kind": "actual_task",
+        "accepted": accepted,
+        "proof_path": rel_path,
+        "checks": checks,
+    }
+
+
+def worker_response_is_successful(response: dict[str, Any] | None) -> bool:
+    if not isinstance(response, dict):
+        return False
+    status = str(response.get("status", "")).strip().lower()
+    unresolved = response.get("unresolved")
+    has_unresolved = bool(unresolved) if isinstance(unresolved, list) else unresolved not in (None, "")
+    return status in {"completed", "success", "successful"} and not has_unresolved
 
 
 def load_routing(root: Path) -> dict[str, Any]:
@@ -572,68 +775,128 @@ def execute_task(
     start = utc_now()
     start_monotonic = time.monotonic()
     discovery = adapter.discover()
-    command = adapter.build_command(task, task_path)
-    command_hash = hashlib.sha256("\0".join(command).encode("utf-8")).hexdigest()
-
-    report: dict[str, Any] = {
-        "schema_version": 1,
-        "task_id": plan["task_id"],
-        "task_path": plan["task_path"],
-        "worker": worker,
-        "run_class": plan["run_class"],
-        "adapter": adapter.__class__.__name__,
-        "command_identity": {
-            "executable": command[0],
-            "argv": command,
-            "sha256": command_hash,
-        },
-        "discovery": discovery,
-        "started_at": start,
-        "ended_at": None,
-        "duration_seconds": None,
-        "status": "running",
-        "exit_status": None,
-        "stdout_summary": "",
-        "stderr_summary": "",
-        "task_result": None,
-        "warnings": [],
-        "unresolved": [],
-    }
-
-    try:
-        result = subprocess.run(
-            command,
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
+    instruction = build_worker_instruction(task, task_path, root) if should_execute_real_task(task) else None
+    before_files = git_changed_files(root)
+    with tempfile.TemporaryDirectory(prefix="ldi-worker-") as tmp:
+        tmpdir = Path(tmp)
+        instruction_path = tmpdir / "instruction.json"
+        schema_path = tmpdir / "response-schema.json"
+        if instruction is not None:
+            instruction_path.write_text(format_json(instruction), encoding="utf-8")
+            schema_path.write_text(format_json(worker_response_schema()), encoding="utf-8")
+        command = adapter.build_command(
+            task,
+            task_path,
+            root,
+            instruction_path=instruction_path if instruction is not None else None,
+            response_schema_path=schema_path if instruction is not None else None,
         )
-        report["exit_status"] = result.returncode
-        report["stdout_summary"] = sanitize_output(result.stdout)
-        report["stderr_summary"] = sanitize_output(result.stderr)
-        if result.stderr.strip():
-            report["warnings"].append("worker wrote to stderr; see stderr_summary")
-        if result.returncode == 0:
-            report["status"] = "completed"
-            report["task_result"] = "local worker CLI invocation proved through adapter"
-        else:
-            report["status"] = "failed"
-            report["task_result"] = "worker exited nonzero; no automatic retry attempted"
-            report["unresolved"].append("recommended failover route: inspect report and re-route explicitly")
-    except subprocess.TimeoutExpired as exc:
-        report["status"] = "timeout"
-        report["exit_status"] = None
-        report["stdout_summary"] = sanitize_output(exc.stdout or "")
-        report["stderr_summary"] = sanitize_output(exc.stderr or "")
-        report["task_result"] = f"worker timed out after {timeout_seconds} seconds"
-        report["unresolved"].append("recommended failover route: inspect timeout and re-route explicitly")
-    finally:
-        report["ended_at"] = utc_now()
-        report["duration_seconds"] = round(time.monotonic() - start_monotonic, 3)
-        write_execution_report(report, root=root)
+        stdin_text = adapter.build_stdin(instruction)
+        command_hash = hashlib.sha256("\0".join(command).encode("utf-8")).hexdigest()
+
+        report: dict[str, Any] = {
+            "schema_version": 2,
+            "task_id": plan["task_id"],
+            "task_path": plan["task_path"],
+            "worker": worker,
+            "run_class": plan["run_class"],
+            "adapter": adapter.__class__.__name__,
+            "command_identity": {
+                "executable": command[0],
+                "argv": command,
+                "sha256": command_hash,
+            },
+            "discovery": discovery,
+            "started_at": start,
+            "ended_at": None,
+            "duration_seconds": None,
+            "status": "running",
+            "worker_invocation_status": "running",
+            "task_acceptance_status": "not_evaluated",
+            "exit_status": None,
+            "stdout_summary": "",
+            "stderr_summary": "",
+            "task_result": None,
+            "worker_response": None,
+            "files_changed": [],
+            "validation_results": [],
+            "warnings": [],
+            "unresolved": [],
+        }
+
+        try:
+            result = subprocess.run(
+                command,
+                cwd=root,
+                input=stdin_text,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+            report["exit_status"] = result.returncode
+            report["stdout_summary"] = sanitize_output(result.stdout)
+            report["stderr_summary"] = sanitize_output(result.stderr)
+            if result.stderr.strip():
+                report["warnings"].append("worker wrote to stderr; see stderr_summary")
+            if result.returncode == 0:
+                report["worker_invocation_status"] = "completed"
+                report["task_result"] = "local worker CLI invocation completed through adapter"
+                if instruction is None:
+                    report["status"] = "completed"
+                    report["task_acceptance_status"] = "accepted"
+                else:
+                    report["worker_response"] = parse_worker_response(result.stdout)
+                    validation = validate_proof_output(root, instruction)
+                    report["validation_results"].append(validation)
+                    response_ok = worker_response_is_successful(report["worker_response"])
+                    accepted = bool(validation.get("accepted")) and response_ok
+                    report["task_acceptance_status"] = "accepted" if accepted else "rejected"
+                    report["status"] = "completed" if accepted else "failed"
+                    if not accepted:
+                        if not validation.get("accepted"):
+                            report["unresolved"].append("proof output validation failed")
+                        if not response_ok:
+                            report["unresolved"].append(
+                                "worker response was not completed/successful or has unresolved blockers"
+                            )
+            else:
+                report["status"] = "failed"
+                report["worker_invocation_status"] = "failed"
+                report["task_acceptance_status"] = "not_evaluated"
+                report["task_result"] = "worker exited nonzero; no automatic retry attempted"
+                report["unresolved"].append("recommended failover route: inspect report and re-route explicitly")
+        except subprocess.TimeoutExpired as exc:
+            report["status"] = "timeout"
+            report["worker_invocation_status"] = "timeout"
+            report["task_acceptance_status"] = "not_evaluated"
+            report["exit_status"] = None
+            report["stdout_summary"] = sanitize_output(exc.stdout or "")
+            report["stderr_summary"] = sanitize_output(exc.stderr or "")
+            report["task_result"] = f"worker timed out after {timeout_seconds} seconds"
+            report["unresolved"].append("recommended failover route: inspect timeout and re-route explicitly")
+        finally:
+            after_files = git_changed_files(root)
+            report["files_changed"] = sorted(set(after_files) - set(before_files))
+            report["ended_at"] = utc_now()
+            report["duration_seconds"] = round(time.monotonic() - start_monotonic, 3)
+            write_execution_report(report, root=root)
 
     return report
+
+
+def parse_worker_response(stdout: str) -> dict[str, Any] | None:
+    stripped = stdout.strip()
+    if not stripped:
+        return None
+    for candidate in (stripped, stripped.splitlines()[-1]):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 def write_execution_report(report: dict[str, Any], root: Path) -> Path:

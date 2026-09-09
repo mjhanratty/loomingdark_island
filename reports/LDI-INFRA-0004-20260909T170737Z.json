@@ -1,0 +1,86 @@
+{
+  "adapter": "CodexAdapter",
+  "command_identity": {
+    "argv": [
+      "/Applications/ChatGPT.app/Contents/Resources/codex",
+      "--cd",
+      "/Users/matthewhanratty/Documents/Looming Dark",
+      "--sandbox",
+      "workspace-write",
+      "-a",
+      "never",
+      "exec",
+      "--output-schema",
+      "/var/folders/hj/chyb6fy142b3xf_l3qbb4tq00000gn/T/ldi-worker-im8gejpf/response-schema.json",
+      "-"
+    ],
+    "executable": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "sha256": "640affd4466aa98c339ab8b8537c775fc1b89a434842df546efe5ad37d35d12b"
+  },
+  "discovery": {
+    "adapter": "CodexAdapter",
+    "available": true,
+    "executable": "codex",
+    "path": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "worker": "codex"
+  },
+  "duration_seconds": 69.894,
+  "ended_at": "2026-09-09T17:07:37+00:00",
+  "exit_status": 0,
+  "files_changed": [
+    "reports/LDI-EX-0008-20260909T170718Z.json"
+  ],
+  "report_path": "reports/LDI-INFRA-0004-20260909T170737Z.json",
+  "run_class": "high",
+  "schema_version": 2,
+  "started_at": "2026-09-09T17:06:28+00:00",
+  "status": "completed",
+  "stderr_summary": "2026-09-09T17:06:28.344604Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-09-09T17:06:28.344624Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\nOpenAI Codex v0.145.0-alpha.30\n--------\nworkdir: /Users/matthewhanratty/Documents/Looming Dark\nmodel: gpt-5.5\nprovider: openai\napproval: never\nsandbox: workspace-write [workdir, /tmp, $TMPDIR]\nreasoning effort: low\nreasoning summaries: none\nsession id: 01a08722-9f4a-7190-972d-38de26350001\n--------\nuser\n{\n  \"allowed_paths\": [\n    \"control-plane/**\",\n    \"scripts/**\",\n    \"tests/control-plane/**\",\n    \"tasks/examples/**\",\n    \"reports/**\"\n  ],\n  \"authoritative_repo_rules\": {\n    \"AGENTS.md\": \"# AGENTS.md\\n\\nShared operating rules for ChatGPT, Codex, Cursor, and any future agent working in this repository.\\n\\n## 1. Source of truth\\n\\nThis repository is authoritative. Chat transcripts, local scratch notes, and model memory are not authoritative unless the relevant decision is written back here.\\n\\n## 2. Engine and target\\n\\n- Production engine: **Unity 6**.\\n- Use modern Unity tooling and hardware assumptions.\\n- \\u201cPS3-era\\u201d refers to **visual fidelity only**, not PS3 hardware/API limitations.\\n- Preserve PS1/PS2 survival-horror design language, pacing, atmosphere, and environmental storytelling.\\n- Modern lighting, fog, weather, audio, VFX, and post-processing are encouraged.\\n\\n## 3. Immediate production priority\\n\\n1. Establish shared automation/control infrastructure.\\n2. Block out the entire Island at macro scale.\\n3. Validate Lighthouse sightlines and Island readability.\\n4. Take Beach -> Harbor -> Lighthouse -> forest transition to vertical-slice fidelity first.\\n5. Do not prematurely art-finish Town, Old Town, Manor, or Crypt.\\n\\n## 4. Work ownership\\n\\n- Every implementation task should have a task packet.\\n- Every task packet must identify an owner/worker.\\n- Do not allow Codex and Cursor to modify the same Unity scene, prefab, package manifest, project setting, or global manager simultaneously.\\n- Use branches/worktrees for parallel work where practical.\\n- If file ownership is ambiguous, stop and resolve ownership before editing.\\n\\n## 5. Scope discipline\\n\\n- Do not redesign approved gameplay to make implementation easier without an explicit design decision.\\n- Do not modify unrelated files.\\n- Do not install or remove packages without explicit authorization in the task.\\n- Do not silently delete or replace assets.\\n- Do not convert a temporary workaround into permanent architecture without documenting it.\\n\\n## 6. Validation\\n\\nFor code or Unity changes:\\n\\n- compile after meaningful changes;\\n- inspect Unity console output when Unity is available;\\n- run relevant tests/checks;\\n- report new warnings/errors;\\n- verify acceptance criteria before marking complete.\\n\\nA task is not complete merely because files were changed.\\n\\n## 7. Asset provenance\\n\\nEvery external or AI-generated production asset must have provenance recorded in the asset registry.\\n\\nRecord at minimum:\\n\\n- asset ID;\\n- source/tool/package;\\n- creator/vendor where applicable;\\n- license/status;\\n- acquisition or generation date;\\n- original source/reference;\\n- AI model/tool and generation job ID when applicable;\\n- modifications;\\n- final Unity path;\\n- restrictions such as `NO_EXTERNAL`.\\n\\nPurchased assets are building blocks, not finished Looming Dark locations.\\n\\n## 8. AI generation rules\\n\\n- Do not spend paid generation credits without an approved asset brief unless the task explicitly allows exploration.\\n- Prefer one primary generator per asset request.\\n- Use fallback generators only after the primary route fails acceptance criteria.\\n- Reuse approved references, style guides, dimensions, topology targets, and material requirements.\\n- Generated outputs must enter the controlled asset pipeline before Unity production use.\\n\\n## 9. Token / mode\n[truncated]",
+  "stdout_summary": "{\"checks_performed\":[\"python3 scripts/ldi --self-test: passed, 28 tests\",\"python3 scripts/ldi --json --workers: passed; codex available, cursor/claude unavailable\",\"python3 scripts/ldi --json --dry-run tasks/examples/valid-actual-task-execution-proof.yaml: passed; dry-run only\",\"python3 scripts/ldi --execute tasks/examples/valid-actual-task-execution-proof.yaml: failed before worker task acceptance due to local Codex CLI initialization error\"],\"files_changed\":[\"tasks/examples/worker-execution-proof/LDI-INFRA-0004.json\",\"reports/LDI-EX-0008-20260909T170718Z.json\"],\"status\":\"partial\",\"summary\":\"Created the required deterministic proof artifact for LDI-INFRA-0004 within the permitted proof directory. Existing control-plane tests pass and dry-run/worker discovery behave as expected. The live Codex adapter invocation was attempted and recorded, but the local Codex CLI failed during startup before task processing.\",\"task_id\":\"LDI-INFRA-0004\",\"unresolved\":[\"Live dispatch acceptance could not be validated because Codex CLI exited with: readonly /Users/matthewhanratty/.codex/state_5.sqlite and app-server permission error.\"],\"warnings\":[\"Worktree already contained preexisting modifications in control-plane/README.md, control-plane/ldi.py, tests/control-plane/test_ldi.py, task examples, proof output, and reports before my proof artifact edit.\",\"No Unity, design, asset, package, or project settings paths were modified by this worker action.\"]}\n",
+  "task_acceptance_status": "accepted",
+  "task_id": "LDI-INFRA-0004",
+  "task_path": "tasks/approved/LDI-INFRA-0004-actual-task-execution.yaml",
+  "task_result": "local worker CLI invocation completed through adapter",
+  "unresolved": [],
+  "validation_results": [
+    {
+      "accepted": true,
+      "checks": [
+        "task_id: ok",
+        "objective: ok",
+        "followed_repository_restrictions: ok",
+        "permitted_directory: ok",
+        "worker_result: ok"
+      ],
+      "kind": "actual_task",
+      "proof_path": "tasks/examples/worker-execution-proof/LDI-INFRA-0004.json"
+    }
+  ],
+  "warnings": [
+    "worker wrote to stderr; see stderr_summary"
+  ],
+  "worker": "codex",
+  "worker_invocation_status": "completed",
+  "worker_response": {
+    "checks_performed": [
+      "python3 scripts/ldi --self-test: passed, 28 tests",
+      "python3 scripts/ldi --json --workers: passed; codex available, cursor/claude unavailable",
+      "python3 scripts/ldi --json --dry-run tasks/examples/valid-actual-task-execution-proof.yaml: passed; dry-run only",
+      "python3 scripts/ldi --execute tasks/examples/valid-actual-task-execution-proof.yaml: failed before worker task acceptance due to local Codex CLI initialization error"
+    ],
+    "files_changed": [
+      "tasks/examples/worker-execution-proof/LDI-INFRA-0004.json",
+      "reports/LDI-EX-0008-20260909T170718Z.json"
+    ],
+    "status": "partial",
+    "summary": "Created the required deterministic proof artifact for LDI-INFRA-0004 within the permitted proof directory. Existing control-plane tests pass and dry-run/worker discovery behave as expected. The live Codex adapter invocation was attempted and recorded, but the local Codex CLI failed during startup before task processing.",
+    "task_id": "LDI-INFRA-0004",
+    "unresolved": [
+      "Live dispatch acceptance could not be validated because Codex CLI exited with: readonly /Users/matthewhanratty/.codex/state_5.sqlite and app-server permission error."
+    ],
+    "warnings": [
+      "Worktree already contained preexisting modifications in control-plane/README.md, control-plane/ldi.py, tests/control-plane/test_ldi.py, task examples, proof output, and reports before my proof artifact edit.",
+      "No Unity, design, asset, package, or project settings paths were modified by this worker action."
+    ]
+  }
+}

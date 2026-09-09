@@ -1,0 +1,7 @@
+{
+  "followed_repository_restrictions": true,
+  "objective": "Upgrade the Looming Dark control plane from version-probe dispatch to actual task execution. The selected local worker must receive a real approved task packet plus authoritative repository context, perform one repository-safe implementation task, and return a structured completion result that the control plane records and validates. This milestone must remain isolated from Unity, asset generation, design files, package changes, and paid services.",
+  "permitted_directory": "tasks/examples/worker-execution-proof",
+  "task_id": "LDI-INFRA-0004",
+  "worker_result": "completed"
+}

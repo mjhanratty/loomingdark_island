@@ -90,6 +90,14 @@ class PlanTaskTests(unittest.TestCase):
         self.assertTrue(plan["worker_locked"])
         self.assertTrue(plan["run_class_locked"])
 
+    def test_actual_execution_proof_task_plans_codex_high(self) -> None:
+        plan = ldi.plan_task(
+            ROOT / "tasks/examples/valid-actual-task-execution-proof.yaml", root=ROOT
+        )
+        self.assertEqual(plan["task_id"], "LDI-EX-0008")
+        self.assertEqual(plan["worker"], "codex")
+        self.assertEqual(plan["run_class"], "high")
+
     def test_template_nested_worker_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "nested.yaml"
@@ -232,8 +240,49 @@ class WorkerAdapterTests(unittest.TestCase):
         adapter = ldi.CodexAdapter()
         task = {"id": "LDI-EX-CMD", "status": "approved", "objective": "x"}
         with mock.patch("shutil.which", return_value="/tmp/fake codex"):
-            command = adapter.build_command(task, ROOT / "tasks/examples/valid-live-dispatch-proof.yaml")
+            command = adapter.build_command(
+                task,
+                ROOT / "tasks/examples/valid-live-dispatch-proof.yaml",
+                ROOT,
+            )
         self.assertEqual(command, ["/tmp/fake codex", "--version"])
+
+    def test_actual_command_construction_uses_stdin_and_schema(self) -> None:
+        adapter = ldi.CodexAdapter()
+        task = {
+            "id": "LDI-EX-CMD",
+            "status": "approved",
+            "objective": "x",
+            "proof_task": {"objective": "prove it"},
+        }
+        with mock.patch("shutil.which", return_value="/tmp/fake codex"):
+            command = adapter.build_command(
+                task,
+                ROOT / "tasks/examples/valid-actual-task-execution-proof.yaml",
+                ROOT,
+                instruction_path=Path("/tmp/instruction.json"),
+                response_schema_path=Path("/tmp/schema.json"),
+            )
+        self.assertEqual(command[0], "/tmp/fake codex")
+        self.assertIn("exec", command)
+        self.assertIn("--output-schema", command)
+        self.assertEqual(command[-1], "-")
+        self.assertNotIn("LDI-EX-CMD", command)
+
+    def test_worker_instruction_contains_required_context(self) -> None:
+        task_path = ROOT / "tasks/examples/valid-actual-task-execution-proof.yaml"
+        task = ldi.load_yaml_file(task_path)
+        instruction = ldi.build_worker_instruction(task, task_path, ROOT)
+        self.assertEqual(instruction["task"]["id"], "LDI-EX-0008")
+        self.assertIn("objective", instruction["task"])
+        self.assertIn("AGENTS.md", instruction["authoritative_repo_rules"])
+        self.assertIn("CONSTRUCTION.md", instruction["authoritative_repo_rules"])
+        self.assertIn("allowed_paths", instruction)
+        self.assertIn("forbidden_paths", instruction)
+        self.assertEqual(
+            instruction["proof_task"]["required_output_file"],
+            "tasks/examples/worker-execution-proof/LDI-EX-0008.json",
+        )
 
     def test_unavailable_worker_discovery(self) -> None:
         with mock.patch("shutil.which", return_value=None):
@@ -280,8 +329,12 @@ class WorkerAdapterTests(unittest.TestCase):
             with mock.patch("shutil.which", return_value="/tmp/codex"):
                 with mock.patch("subprocess.run", return_value=completed) as run:
                     report = ldi.execute_task(task_path, root=root)
-            run.assert_called_once()
-            self.assertEqual(run.call_args.args[0], ["/tmp/codex", "--version"])
+            worker_calls = [
+                call for call in run.call_args_list if call.args[0] != ["git", "status", "--porcelain"]
+            ]
+            self.assertEqual(len(worker_calls), 1)
+            self.assertEqual(worker_calls[0].args[0], ["/tmp/codex", "--version"])
+            self.assertIsNone(worker_calls[0].kwargs["input"])
             self.assertEqual(report["status"], "failed")
             self.assertEqual(report["exit_status"], 7)
             self.assertTrue((root / report["report_path"]).is_file())
@@ -303,11 +356,171 @@ class WorkerAdapterTests(unittest.TestCase):
                 encoding="utf-8",
             )
             exc = subprocess.TimeoutExpired(["/tmp/codex", "--version"], timeout=1)
+
+            def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+                if args and args[0] == ["git", "status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
+                raise exc
+
             with mock.patch("shutil.which", return_value="/tmp/codex"):
-                with mock.patch("subprocess.run", side_effect=exc):
+                with mock.patch("subprocess.run", side_effect=fake_run):
                     report = ldi.execute_task(task_path, root=root, timeout_seconds=1)
             self.assertEqual(report["status"], "timeout")
             self.assertTrue((root / report["report_path"]).is_file())
+
+    def test_actual_execution_captures_response_and_validates_output(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=["/tmp/codex", "exec", "-"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "task_id": "LDI-EX-0008",
+                    "status": "completed",
+                    "files_changed": [
+                        "tasks/examples/worker-execution-proof/LDI-EX-0008.json"
+                    ],
+                    "checks_performed": ["proof written"],
+                    "warnings": [],
+                    "unresolved": [],
+                    "summary": "done",
+                }
+            ),
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for folder in ("control-plane", "tasks/examples"):
+                (root / folder).mkdir(parents=True, exist_ok=True)
+            (root / "AGENTS.md").write_text("agents\n", encoding="utf-8")
+            (root / "CONSTRUCTION.md").write_text("construction\n", encoding="utf-8")
+            (root / "control-plane" / "ROUTING.yaml").write_text(
+                (ROOT / "control-plane" / "ROUTING.yaml").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (root / "control-plane" / "ARCHITECTURE.md").write_text("arch\n", encoding="utf-8")
+            (root / "control-plane" / "README.md").write_text("readme\n", encoding="utf-8")
+            (root / "control-plane" / "ldi.py").write_text("ldi\n", encoding="utf-8")
+            proof_dir = root / "tasks/examples/worker-execution-proof"
+            proof_dir.mkdir()
+            proof_path = proof_dir / "LDI-EX-0008.json"
+            task_path = root / "tasks/examples/task.yaml"
+            objective = "Prove actual local worker task execution."
+            task_path.write_text(
+                "id: LDI-EX-0008\nstatus: approved\n"
+                f"objective: {objective}\ntask_class: cross_system\n"
+                "worker:\n  preferred: codex\n  run_class: HIGH\n"
+                "inputs:\n  specs: []\n"
+                "ownership:\n  allowed_paths:\n    - tasks/examples/worker-execution-proof/**\n"
+                "  forbidden_paths:\n    - assets/**\n"
+                "budget:\n  paid_credits_allowed: false\n  max_estimated_cost_usd: 0\n  max_generation_attempts: 0\n"
+                "proof_task:\n  objective: Write proof.\n",
+                encoding="utf-8",
+            )
+
+            def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+                if args and args[0] == ["git", "status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
+                proof_path.write_text(
+                    json.dumps(
+                        {
+                            "task_id": "LDI-EX-0008",
+                            "objective": objective,
+                            "followed_repository_restrictions": True,
+                            "permitted_directory": "tasks/examples/worker-execution-proof",
+                            "worker_result": "completed",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return completed
+
+            with mock.patch("shutil.which", return_value="/tmp/codex"):
+                with mock.patch("subprocess.run", side_effect=fake_run) as run:
+                    report = ldi.execute_task(task_path, root=root)
+            worker_call = [
+                call for call in run.call_args_list if call.args[0] != ["git", "status", "--porcelain"]
+            ][0]
+            self.assertIn("control_plane_instruction_version", worker_call.kwargs["input"])
+            self.assertNotIn("LDI-EX-0008", worker_call.args[0])
+            self.assertEqual(report["worker_invocation_status"], "completed")
+            self.assertEqual(report["task_acceptance_status"], "accepted")
+            self.assertEqual(report["status"], "completed")
+            self.assertEqual(report["worker_response"]["task_id"], "LDI-EX-0008")
+            self.assertTrue(report["validation_results"][0]["accepted"])
+
+    def test_partial_worker_response_with_valid_proof_is_not_accepted(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=["/tmp/codex", "exec", "-"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "task_id": "LDI-EX-0008",
+                    "status": "partial",
+                    "files_changed": [
+                        "tasks/examples/worker-execution-proof/LDI-EX-0008.json"
+                    ],
+                    "checks_performed": ["proof written"],
+                    "warnings": [],
+                    "unresolved": ["worker reported a blocker"],
+                    "summary": "proof exists but task is partial",
+                }
+            ),
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for folder in ("control-plane", "tasks/examples"):
+                (root / folder).mkdir(parents=True, exist_ok=True)
+            (root / "AGENTS.md").write_text("agents\n", encoding="utf-8")
+            (root / "CONSTRUCTION.md").write_text("construction\n", encoding="utf-8")
+            (root / "control-plane" / "ROUTING.yaml").write_text(
+                (ROOT / "control-plane" / "ROUTING.yaml").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            for rel_path in ("ARCHITECTURE.md", "README.md", "ldi.py"):
+                (root / "control-plane" / rel_path).write_text(rel_path, encoding="utf-8")
+            proof_dir = root / "tasks/examples/worker-execution-proof"
+            proof_dir.mkdir()
+            proof_path = proof_dir / "LDI-EX-0008.json"
+            task_path = root / "tasks/examples/task.yaml"
+            objective = "Prove actual local worker task execution."
+            task_path.write_text(
+                "id: LDI-EX-0008\nstatus: approved\n"
+                f"objective: {objective}\ntask_class: cross_system\n"
+                "worker:\n  preferred: codex\n  run_class: HIGH\n"
+                "inputs:\n  specs: []\n"
+                "ownership:\n  allowed_paths:\n    - tasks/examples/worker-execution-proof/**\n"
+                "  forbidden_paths:\n    - assets/**\n"
+                "budget:\n  paid_credits_allowed: false\n  max_estimated_cost_usd: 0\n  max_generation_attempts: 0\n"
+                "proof_task:\n  objective: Write proof.\n",
+                encoding="utf-8",
+            )
+
+            def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+                if args and args[0] == ["git", "status", "--porcelain"]:
+                    return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
+                proof_path.write_text(
+                    json.dumps(
+                        {
+                            "task_id": "LDI-EX-0008",
+                            "objective": objective,
+                            "followed_repository_restrictions": True,
+                            "permitted_directory": "tasks/examples/worker-execution-proof",
+                            "worker_result": "completed",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return completed
+
+            with mock.patch("shutil.which", return_value="/tmp/codex"):
+                with mock.patch("subprocess.run", side_effect=fake_run):
+                    report = ldi.execute_task(task_path, root=root)
+            self.assertTrue(report["validation_results"][0]["accepted"])
+            self.assertEqual(report["worker_invocation_status"], "completed")
+            self.assertEqual(report["task_acceptance_status"], "rejected")
+            self.assertEqual(report["status"], "failed")
+            self.assertIn("worker response was not completed", report["unresolved"][0])
 
 
 if __name__ == "__main__":

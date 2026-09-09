@@ -1,0 +1,7 @@
+{
+  "followed_repository_restrictions": true,
+  "objective": "Prove actual local worker task execution by creating the deterministic proof artifact requested by the control plane.",
+  "permitted_directory": "tasks/examples/worker-execution-proof",
+  "task_id": "LDI-EX-0008",
+  "worker_result": "completed"
+}
