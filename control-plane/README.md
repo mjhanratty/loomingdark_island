@@ -1,8 +1,9 @@
 # Looming Dark control-plane CLI
 
-Dry-run planner for approved task packets. It validates required fields, applies
-`control-plane/ROUTING.yaml`, and prints a deterministic worker/run-class plan.
-It does **not** invoke Cursor, Codex, Unity, Meshy, Tripo, or paid services.
+Planner and explicitly gated local worker dispatcher for approved task packets.
+It validates required fields, applies `control-plane/ROUTING.yaml`, prints a
+deterministic worker/run-class plan, and can prove local CLI dispatch through
+isolated worker adapters.
 
 ## One-command execution
 
@@ -24,13 +25,27 @@ Self-test (valid and invalid cases):
 python3 scripts/ldi --self-test
 ```
 
+Worker discovery:
+
+```bash
+python3 scripts/ldi --workers
+```
+
+Live dispatch is opt-in and requires an approved task packet:
+
+```bash
+python3 scripts/ldi --execute tasks/examples/valid-live-dispatch-proof.yaml
+```
+
 Equivalent direct invocation:
 
 ```bash
 python3 control-plane/ldi.py --dry-run tasks/examples/valid-editor-tooling.yaml
 ```
 
-`--execute` is rejected. This version is dry-run only.
+`--execute` does not grant permission to use paid generation APIs. This milestone
+uses a repository-safe local CLI version probe through the selected worker
+adapter and writes a structured report under `reports/`.
 
 ## Output
 
@@ -41,6 +56,16 @@ A valid plan always includes:
 - `run_class`
 - exclusive-ownership / conflict status
 - `next_action`
+
+A live report includes:
+
+- worker and run_class
+- adapter and command identity
+- start/end state
+- exit status
+- stdout/stderr summaries
+- task result
+- report path
 
 Human-readable text is followed by an equivalent JSON document. Invalid task
 input exits nonzero and prints a useful error.

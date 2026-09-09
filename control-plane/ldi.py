@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""Looming Dark control-plane CLI (dry-run planner).
+"""Looming Dark control-plane CLI.
 
 Reads a task packet, validates required fields, applies ROUTING.yaml, and
-prints a deterministic execution plan without invoking workers or paid services.
+prints a deterministic execution plan. Live execution is explicitly gated and
+uses local worker adapters without invoking paid generation services.
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
+import hashlib
 import json
+import shutil
+import subprocess
 import sys
+import time
 import unittest
 from fnmatch import fnmatch
 from pathlib import Path
@@ -18,10 +24,7 @@ from typing import Any
 try:
     import yaml
 except ImportError as exc:  # pragma: no cover - PyYAML is expected in the runtime
-    raise SystemExit(
-        "error: PyYAML is required but was not found in this runtime. "
-        "This CLI does not install packages."
-    ) from exc
+    yaml = None
 
 REQUIRED_FIELDS = ("id", "status", "objective")
 NON_LOCK_OWNERS = frozenset({"shared", "unassigned", "any", "none", "null"})
@@ -29,10 +32,16 @@ BROAD_PATHS = frozenset({"*", "**", "**/*", ".", "./", "/", "/**"})
 NEXT_ACTION = (
     "dry-run only; do not invoke Cursor, Codex, Unity, Meshy, Tripo, or paid services"
 )
+WORKER_NAMES = ("cursor", "codex", "claude")
+DEFAULT_TIMEOUT_SECONDS = 20
 
 
 class PlanError(Exception):
     """Invalid task input or unusable routing configuration."""
+
+
+class ExecuteError(Exception):
+    """Execution was rejected or failed before a report could be written."""
 
 
 def repo_root() -> Path:
@@ -44,12 +53,248 @@ def load_yaml_file(path: Path) -> Any:
         raise PlanError(f"file not found: {path}")
     try:
         text = path.read_text(encoding="utf-8")
-        data = yaml.safe_load(text)
-    except yaml.YAMLError as exc:
-        raise PlanError(f"invalid YAML in {path}: {exc}") from exc
+        data = safe_load_yaml(text)
     except OSError as exc:
         raise PlanError(f"cannot read {path}: {exc}") from exc
     return data
+
+
+def safe_load_yaml(text: str) -> Any:
+    if yaml is not None:
+        try:
+            return yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise PlanError(f"invalid YAML: {exc}") from exc
+    return parse_simple_yaml(text)
+
+
+def parse_simple_yaml(text: str) -> Any:
+    """Parse the small YAML subset used by Looming Dark task packets."""
+
+    lines = text.splitlines()
+
+    def strip_comment(raw: str) -> str:
+        in_quote: str | None = None
+        for idx, ch in enumerate(raw):
+            if ch in {"'", '"'}:
+                in_quote = None if in_quote == ch else ch
+            if ch == "#" and in_quote is None:
+                return raw[:idx]
+        return raw
+
+    def parse_scalar(raw: str) -> Any:
+        value = raw.strip()
+        if value in {"", "null", "Null", "NULL", "~"}:
+            return None
+        if value in {"true", "True", "TRUE"}:
+            return True
+        if value in {"false", "False", "FALSE"}:
+            return False
+        if value.startswith("[") and value.endswith("]"):
+            inner = value[1:-1].strip()
+            if not inner:
+                return []
+            return [parse_scalar(part.strip()) for part in inner.split(",")]
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            return value[1:-1]
+        try:
+            return int(value)
+        except ValueError:
+            pass
+        try:
+            return float(value)
+        except ValueError:
+            return value
+
+    def next_content(start: int) -> tuple[int, int, str] | None:
+        for idx in range(start, len(lines)):
+            raw = strip_comment(lines[idx]).rstrip()
+            if not raw.strip():
+                continue
+            return idx, len(raw) - len(raw.lstrip(" ")), raw.strip()
+        return None
+
+    def parse_block(start: int, indent: int) -> tuple[Any, int]:
+        marker = next_content(start)
+        if marker is None:
+            return {}, start
+        _, marker_indent, marker_text = marker
+        if marker_indent < indent:
+            return {}, start
+        is_list = marker_text.startswith("- ")
+        container: Any = [] if is_list else {}
+        i = start
+        while i < len(lines):
+            raw = strip_comment(lines[i]).rstrip()
+            if not raw.strip():
+                i += 1
+                continue
+            current_indent = len(raw) - len(raw.lstrip(" "))
+            if current_indent < indent:
+                break
+            if current_indent > indent:
+                i += 1
+                continue
+            text = raw.strip()
+            if isinstance(container, list):
+                if not text.startswith("- "):
+                    break
+                item_text = text[2:].strip()
+                if not item_text:
+                    value, i = parse_block(i + 1, indent + 2)
+                    container.append(value)
+                    continue
+                if ":" in item_text and not item_text.startswith(("'", '"')):
+                    key, rest = item_text.split(":", 1)
+                    item: dict[str, Any] = {}
+                    if rest.strip():
+                        item[key.strip()] = parse_scalar(rest)
+                        i += 1
+                    else:
+                        value, i = parse_block(i + 1, indent + 4)
+                        item[key.strip()] = value
+                    while i < len(lines):
+                        nxt = next_content(i)
+                        if nxt is None or nxt[1] < indent + 2 or nxt[2].startswith("- "):
+                            break
+                        raw2 = strip_comment(lines[i]).rstrip()
+                        sub_indent = len(raw2) - len(raw2.lstrip(" "))
+                        if sub_indent != indent + 2:
+                            i += 1
+                            continue
+                        key2, rest2 = raw2.strip().split(":", 1)
+                        if rest2.strip():
+                            item[key2.strip()] = parse_scalar(rest2)
+                            i += 1
+                        else:
+                            value2, i = parse_block(i + 1, indent + 4)
+                            item[key2.strip()] = value2
+                    container.append(item)
+                    continue
+                container.append(parse_scalar(item_text))
+                i += 1
+                continue
+            if ":" not in text:
+                i += 1
+                continue
+            key, rest = text.split(":", 1)
+            key = key.strip()
+            rest = rest.strip()
+            if rest in {">-", ">"}:
+                parts: list[str] = []
+                i += 1
+                while i < len(lines):
+                    raw2 = lines[i].rstrip()
+                    if not raw2.strip():
+                        i += 1
+                        continue
+                    sub_indent = len(raw2) - len(raw2.lstrip(" "))
+                    if sub_indent <= indent:
+                        break
+                    parts.append(raw2.strip())
+                    i += 1
+                container[key] = " ".join(parts)
+            elif rest:
+                container[key] = parse_scalar(rest)
+                i += 1
+            else:
+                value, i = parse_block(i + 1, indent + 2)
+                container[key] = value
+        return container, i
+
+    parsed, _ = parse_block(0, 0)
+    return parsed
+
+
+def utc_now() -> str:
+    return _dt.datetime.now(tz=_dt.UTC).isoformat(timespec="seconds")
+
+
+def sanitize_output(text: str, limit: int = 4000) -> str:
+    cleaned = text.replace("\x00", "")
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[:limit] + "\n[truncated]"
+
+
+def task_status(task: dict[str, Any]) -> str:
+    return str(task.get("status", "")).strip().lower()
+
+
+def validate_approved_for_execute(task: dict[str, Any]) -> None:
+    if task_status(task) != "approved":
+        raise ExecuteError("live dispatch requires task status: approved")
+    budget = task.get("budget")
+    if isinstance(budget, dict):
+        paid = bool(budget.get("paid_credits_allowed"))
+        max_cost = budget.get("max_estimated_cost_usd", 0)
+        attempts = budget.get("max_generation_attempts", 0)
+        if paid or max_cost not in (0, 0.0, "0", "0.0", None) or attempts not in (0, "0", None):
+            raise ExecuteError("live dispatch cannot infer permission to spend paid credits")
+
+
+class WorkerAdapter:
+    """Local CLI adapter boundary for future MCP/API-backed workers."""
+
+    name = ""
+    executable = ""
+
+    def discover(self) -> dict[str, Any]:
+        path = shutil.which(self.executable)
+        return {
+            "worker": self.name,
+            "adapter": self.__class__.__name__,
+            "executable": self.executable,
+            "path": path,
+            "available": path is not None,
+        }
+
+    def build_command(self, task: dict[str, Any], task_path: Path) -> list[str]:
+        raise NotImplementedError
+
+
+class VersionProbeAdapter(WorkerAdapter):
+    """Repository-safe proof adapter: invoke the local worker CLI only."""
+
+    def build_command(self, task: dict[str, Any], task_path: Path) -> list[str]:
+        discovered = self.discover()
+        if not discovered["path"]:
+            raise ExecuteError(f"worker '{self.name}' is unavailable")
+        return [str(discovered["path"]), "--version"]
+
+
+class CursorAdapter(VersionProbeAdapter):
+    name = "cursor"
+    executable = "cursor"
+
+
+class CodexAdapter(VersionProbeAdapter):
+    name = "codex"
+    executable = "codex"
+
+
+class ClaudeAdapter(VersionProbeAdapter):
+    name = "claude"
+    executable = "claude"
+
+
+def worker_adapters() -> dict[str, WorkerAdapter]:
+    return {
+        "cursor": CursorAdapter(),
+        "codex": CodexAdapter(),
+        "claude": ClaudeAdapter(),
+    }
+
+
+def discover_workers() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "workers": {
+            name: adapter.discover() for name, adapter in worker_adapters().items()
+        },
+    }
 
 
 def load_routing(root: Path) -> dict[str, Any]:
@@ -310,6 +555,101 @@ def plan_task(task_path: Path, root: Path | None = None) -> dict[str, Any]:
     }
 
 
+def execute_task(
+    task_path: Path,
+    root: Path | None = None,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    root = root or repo_root()
+    task = validate_required_fields(load_yaml_file(task_path))
+    validate_approved_for_execute(task)
+    plan = plan_task(task_path, root=root)
+    worker = str(plan["worker"]).lower()
+    adapter = worker_adapters().get(worker)
+    if adapter is None:
+        raise ExecuteError(f"no adapter configured for worker '{worker}'")
+
+    start = utc_now()
+    start_monotonic = time.monotonic()
+    discovery = adapter.discover()
+    command = adapter.build_command(task, task_path)
+    command_hash = hashlib.sha256("\0".join(command).encode("utf-8")).hexdigest()
+
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "task_id": plan["task_id"],
+        "task_path": plan["task_path"],
+        "worker": worker,
+        "run_class": plan["run_class"],
+        "adapter": adapter.__class__.__name__,
+        "command_identity": {
+            "executable": command[0],
+            "argv": command,
+            "sha256": command_hash,
+        },
+        "discovery": discovery,
+        "started_at": start,
+        "ended_at": None,
+        "duration_seconds": None,
+        "status": "running",
+        "exit_status": None,
+        "stdout_summary": "",
+        "stderr_summary": "",
+        "task_result": None,
+        "warnings": [],
+        "unresolved": [],
+    }
+
+    try:
+        result = subprocess.run(
+            command,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        report["exit_status"] = result.returncode
+        report["stdout_summary"] = sanitize_output(result.stdout)
+        report["stderr_summary"] = sanitize_output(result.stderr)
+        if result.stderr.strip():
+            report["warnings"].append("worker wrote to stderr; see stderr_summary")
+        if result.returncode == 0:
+            report["status"] = "completed"
+            report["task_result"] = "local worker CLI invocation proved through adapter"
+        else:
+            report["status"] = "failed"
+            report["task_result"] = "worker exited nonzero; no automatic retry attempted"
+            report["unresolved"].append("recommended failover route: inspect report and re-route explicitly")
+    except subprocess.TimeoutExpired as exc:
+        report["status"] = "timeout"
+        report["exit_status"] = None
+        report["stdout_summary"] = sanitize_output(exc.stdout or "")
+        report["stderr_summary"] = sanitize_output(exc.stderr or "")
+        report["task_result"] = f"worker timed out after {timeout_seconds} seconds"
+        report["unresolved"].append("recommended failover route: inspect timeout and re-route explicitly")
+    finally:
+        report["ended_at"] = utc_now()
+        report["duration_seconds"] = round(time.monotonic() - start_monotonic, 3)
+        write_execution_report(report, root=root)
+
+    return report
+
+
+def write_execution_report(report: dict[str, Any], root: Path) -> Path:
+    reports_dir = root / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    safe_task_id = "".join(
+        ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(report["task_id"])
+    )
+    timestamp = _dt.datetime.now(tz=_dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    path = reports_dir / f"{safe_task_id}-{timestamp}.json"
+    path.write_text(format_json(report), encoding="utf-8")
+    report["report_path"] = str(path.relative_to(root)).replace("\\", "/")
+    path.write_text(format_json(report), encoding="utf-8")
+    return path
+
+
 def format_human(plan: dict[str, Any]) -> str:
     if plan.get("conflict_matches"):
         conflicts = ", ".join(
@@ -327,6 +667,31 @@ def format_human(plan: dict[str, Any]) -> str:
         f"task_class: {plan.get('task_class') or '(none)'}",
         f"exclusive_ownership_required: {exclusive}",
         f"next_action: {plan['next_action']}",
+    ]
+    return "\n".join(lines)
+
+
+def format_worker_discovery(payload: dict[str, Any]) -> str:
+    lines = ["Looming Dark worker discovery", "-----------------------------"]
+    for name in WORKER_NAMES:
+        info = payload["workers"].get(name, {})
+        status = "available" if info.get("available") else "unavailable"
+        path = info.get("path") or "(not found)"
+        lines.append(f"{name}: {status} - {path}")
+    return "\n".join(lines)
+
+
+def format_execution_human(report: dict[str, Any]) -> str:
+    lines = [
+        "Looming Dark live dispatch report",
+        "---------------------------------",
+        f"task_id: {report['task_id']}",
+        f"worker: {report['worker']}",
+        f"run_class: {report['run_class']}",
+        f"adapter: {report['adapter']}",
+        f"status: {report['status']}",
+        f"exit_status: {report['exit_status']}",
+        f"report_path: {report.get('report_path', '(not written)')}",
     ]
     return "\n".join(lines)
 
@@ -350,14 +715,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ldi",
         description=(
-            "Dry-run Looming Dark control-plane planner. "
-            "Validates a task packet and prints worker/run-class routing without "
-            "invoking Codex, Cursor, Unity, or paid services."
+            "Looming Dark control-plane planner and explicitly gated local "
+            "worker dispatcher."
         ),
         epilog=(
             "One-command execution from the repository root:\n"
             "  python3 scripts/ldi --dry-run tasks/examples/valid-editor-tooling.yaml\n"
-            "  python3 scripts/ldi --self-test"
+            "  python3 scripts/ldi --self-test\n"
+            "  python3 scripts/ldi --workers"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -366,14 +731,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         default=True,
-        help="Plan only (default; the only supported mode in this version)",
+        help="Plan only (default)",
     )
     parser.add_argument(
         "--execute",
         action="store_true",
-        help="Unsupported in this version; exits nonzero",
+        help="Execute an approved task through a local worker adapter",
     )
     parser.add_argument("--json", action="store_true", help="Print JSON only")
+    parser.add_argument("--workers", action="store_true", help="Discover local worker CLIs")
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help=f"Worker timeout in seconds for --execute (default: {DEFAULT_TIMEOUT_SECONDS})",
+    )
     parser.add_argument(
         "--self-test",
         action="store_true",
@@ -387,15 +759,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     root = repo_root()
 
-    if args.execute:
-        print(
-            "error: execute is not supported; this version is dry-run only",
-            file=sys.stderr,
-        )
-        return 2
-
     if args.self_test:
         return run_self_test(root)
+
+    if args.workers:
+        payload = discover_workers()
+        if args.json:
+            sys.stdout.write(format_json(payload))
+        else:
+            print(format_worker_discovery(payload))
+            print()
+            print("=== JSON ===")
+            sys.stdout.write(format_json(payload))
+        return 0
 
     if not args.task:
         parser.print_help()
@@ -406,9 +782,19 @@ def main(argv: list[str] | None = None) -> int:
         task_path = (Path.cwd() / task_path).resolve()
 
     try:
+        if args.execute:
+            report = execute_task(task_path, root=root, timeout_seconds=args.timeout)
+            if args.json:
+                sys.stdout.write(format_json(report))
+            else:
+                print(format_execution_human(report))
+                print()
+                print("=== JSON ===")
+                sys.stdout.write(format_json(report))
+            return 0 if report["status"] == "completed" else 1
         plan = plan_task(task_path, root=root)
-    except PlanError as exc:
-        payload = {"ok": False, "error": str(exc), "dry_run": True}
+    except (PlanError, ExecuteError) as exc:
+        payload = {"ok": False, "error": str(exc), "dry_run": not args.execute}
         if args.json:
             sys.stdout.write(format_json(payload))
         else:
